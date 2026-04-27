@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Aplica regras de atribuição automática de Analista Responsável aos itens de mobilização.
 

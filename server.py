@@ -3,34 +3,24 @@ import subprocess
 import sys
 from flask import Flask, render_template, request, Response, stream_with_context, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import re
 import threading
-import time
-import math
-import signal
+import openpyxl
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
 
 # Configurações
 UPLOAD_FOLDER = 'templates'
+REPORTS_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'xlsx'}
 
-# Sistema de Heartbeat
-ACTIVE_SESSIONS = {}  # {session_id: {timestamp, last_heartbeat, user_agent}}
-HEARTBEAT_TIMEOUT = 25  # 25 segundos (2s intervalo + 2s de margem)
-SESSIONS_EVER_EXISTED = False  # Flag para rastrear se houve alguma sessão
 ACTIVE_JOBS = 0
 JOBS_LOCK = threading.Lock()
-SHUTDOWN_PENDING = False
-SHUTDOWN_AT = None
-SHUTDOWN_GRACE_SECONDS = 4
-SHUTDOWN_TRIGGERED = False
-SHUTDOWN_REASON = None
-INACTIVITY_TIMEOUT_SECONDS = 60
-LAST_USER_ACTIVITY = datetime.now()
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
@@ -53,40 +43,159 @@ def end_job():
             ACTIVE_JOBS -= 1
 
 
-def get_shutdown_payload(now=None):
-    now = now or datetime.now()
-    inactivity_remaining = max(
-        0,
-        math.ceil(INACTIVITY_TIMEOUT_SECONDS - (now - LAST_USER_ACTIVITY).total_seconds())
+def generate_report_excel(report_data: dict) -> str:
+    """
+    Gera um arquivo Excel formatado a partir do JSON de relatório emitido pelo PowerShell.
+    Retorna o caminho absoluto do arquivo gerado.
+    """
+    # ── Cores Vestas ──────────────────────────────────────────────────────────
+    COLOR_NIGHT_SKY  = "1F3144"
+    COLOR_BLUE_SKY   = "005AFF"
+    COLOR_LIGHT_GREY = "E3E5E8"
+    COLOR_GREEN_FILL = "D4EDDA"
+    COLOR_RED_FILL   = "F8D7DA"
+    COLOR_WHITE      = "FFFFFF"
+    COLOR_LABEL_BG   = "EBF3FB"
+
+    fill_header    = PatternFill("solid", fgColor=COLOR_NIGHT_SKY)
+    fill_col_hdr   = PatternFill("solid", fgColor=COLOR_NIGHT_SKY)
+    fill_label     = PatternFill("solid", fgColor=COLOR_LABEL_BG)
+    fill_success   = PatternFill("solid", fgColor=COLOR_GREEN_FILL)
+    fill_error     = PatternFill("solid", fgColor=COLOR_RED_FILL)
+    fill_light     = PatternFill("solid", fgColor=COLOR_LIGHT_GREY)
+
+    font_white_bold  = Font(name="Calibri", bold=True,  color=COLOR_WHITE, size=13)
+    font_col_hdr     = Font(name="Calibri", bold=True,  color=COLOR_WHITE, size=10)
+    font_label       = Font(name="Calibri", bold=True,  color=COLOR_NIGHT_SKY, size=10)
+    font_value       = Font(name="Calibri", bold=False, color=COLOR_NIGHT_SKY, size=10)
+    font_value_bold  = Font(name="Calibri", bold=True,  color=COLOR_NIGHT_SKY, size=10)
+
+    thin_border_side = Side(style="thin", color="CCCCCC")
+    thin_border      = Border(
+        left=thin_border_side, right=thin_border_side,
+        top=thin_border_side,  bottom=thin_border_side
     )
 
-    if not SHUTDOWN_PENDING or SHUTDOWN_AT is None:
-        return {
-            'shutdown_pending': False,
-            'shutdown_in_seconds': None,
-            'shutdown_reason': None,
-            'inactivity_remaining_seconds': inactivity_remaining
-        }
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Relatório de Submissão"
 
-    shutdown_in_seconds = max(0, math.ceil((SHUTDOWN_AT - now).total_seconds()))
-    return {
-        'shutdown_pending': True,
-        'shutdown_in_seconds': shutdown_in_seconds,
-        'shutdown_reason': SHUTDOWN_REASON,
-        'inactivity_remaining_seconds': inactivity_remaining
-    }
+    items             = report_data.get("items", [])
+    submission_dt     = report_data.get("submission_datetime", "")
+    id_mob            = report_data.get("id_mobilizacao", "")
+    requester_name    = report_data.get("requester_name", "")
+    requester_email   = report_data.get("requester_email", "")
 
+    # ── Coletar todos os display names usados, preservando ordem de aparição ──
+    display_cols: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        for col_name in (item.get("fields") or {}).keys():
+            if col_name not in seen:
+                seen.add(col_name)
+                display_cols.append(col_name)
 
-def terminate_server_process():
-    """Finaliza o servidor de forma confiável no Windows/Linux."""
-    try:
-        os.kill(os.getpid(), getattr(signal, 'SIGTERM', 15))
-    except Exception as e:
-        print(f"Falha ao enviar SIGTERM ({e}). Forçando encerramento.")
-    finally:
-        # Pequena janela para flush de logs antes de encerrar o processo.
-        time.sleep(0.5)
-        os._exit(0)
+    total_cols = 2 + len(display_cols)  # "ID SP" + "Status" + campo...
+    last_col_letter = get_column_letter(max(total_cols, 3))
+
+    # ── ROW 1 – Título principal ───────────────────────────────────────────────
+    ws.merge_cells(f"A1:{last_col_letter}1")
+    title_cell = ws["A1"]
+    title_cell.value = "RELATÓRIO DE SUBMISSÃO — MOBILIZAÇÕES VESTAS"
+    title_cell.fill  = fill_header
+    title_cell.font  = font_white_bold
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    # ── ROWS 2-5 – Metadados da submissão ─────────────────────────────────────
+    meta_rows = [
+        ("Data/Hora da Submissão:", submission_dt),
+        ("ID de Mobilização:",     id_mob),
+        ("Solicitante:",           requester_name),
+        ("E-mail:",                requester_email),
+    ]
+    for r_offset, (label, value) in enumerate(meta_rows, start=2):
+        label_cell = ws.cell(row=r_offset, column=1, value=label)
+        label_cell.fill  = fill_label
+        label_cell.font  = font_label
+        label_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        label_cell.border = thin_border
+
+        value_cell = ws.cell(row=r_offset, column=2, value=value)
+        value_cell.fill  = fill_light
+        value_cell.font  = font_value_bold
+        value_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        value_cell.border = thin_border
+
+        # Mesclar colunas restantes do valor
+        if total_cols > 2:
+            ws.merge_cells(start_row=r_offset, start_column=2,
+                           end_row=r_offset,   end_column=total_cols)
+        ws.row_dimensions[r_offset].height = 18
+
+    # ── ROW 6 – Linha de separação ────────────────────────────────────────────
+    ws.row_dimensions[6].height = 8
+
+    # ── ROW 7 – Cabeçalho das colunas ─────────────────────────────────────────
+    hdr_row = 7
+    headers = ["ID SP", "Status"] + display_cols
+    for col_idx, header_text in enumerate(headers, start=1):
+        cell = ws.cell(row=hdr_row, column=col_idx, value=header_text)
+        cell.fill      = fill_col_hdr
+        cell.font      = font_col_hdr
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border    = thin_border
+    ws.row_dimensions[hdr_row].height = 22
+
+    # ── ROWS 8+ – Dados ───────────────────────────────────────────────────────
+    for row_offset, item in enumerate(items, start=hdr_row + 1):
+        is_error = "Erro" in str(item.get("status", ""))
+        row_fill = fill_error if is_error else fill_success
+
+        # ID SP
+        id_sp_cell = ws.cell(row=row_offset, column=1, value=item.get("id_sp", ""))
+        id_sp_cell.fill      = row_fill
+        id_sp_cell.font      = font_value_bold
+        id_sp_cell.alignment = Alignment(horizontal="center", vertical="center")
+        id_sp_cell.border    = thin_border
+
+        # Status
+        status_cell = ws.cell(row=row_offset, column=2, value=item.get("status", ""))
+        status_cell.fill      = row_fill
+        status_cell.font      = font_value
+        status_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1, wrap_text=True)
+        status_cell.border    = thin_border
+
+        # Campos do item
+        fields = item.get("fields") or {}
+        for col_offset, col_name in enumerate(display_cols, start=3):
+            val = fields.get(col_name, "")
+            data_cell = ws.cell(row=row_offset, column=col_offset, value=val)
+            data_cell.fill      = row_fill
+            data_cell.font      = font_value
+            data_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1, wrap_text=True)
+            data_cell.border    = thin_border
+
+        ws.row_dimensions[row_offset].height = 18
+
+    # ── Largura das colunas ───────────────────────────────────────────────────
+    ws.column_dimensions["A"].width = 10   # ID SP
+    ws.column_dimensions["B"].width = 30   # Status
+    for col_offset, col_name in enumerate(display_cols, start=3):
+        estimated = max(14, min(len(col_name) + 4, 40))
+        ws.column_dimensions[get_column_letter(col_offset)].width = estimated
+
+    # ── Congelar cabeçalho ────────────────────────────────────────────────────
+    ws.freeze_panes = f"A{hdr_row + 1}"
+
+    # ── Salvar ────────────────────────────────────────────────────────────────
+    os.makedirs(REPORTS_FOLDER, exist_ok=True)
+    safe_id  = re.sub(r"[^A-Za-z0-9]", "_", id_mob) if id_mob else "sem_id"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_filename = f"Relatorio_Mob_{safe_id}_{timestamp}.xlsx"
+    report_path     = os.path.abspath(os.path.join(REPORTS_FOLDER, report_filename))
+    wb.save(report_path)
+    return report_filename, report_path
 
 
 def build_powershell_command(script_path, file_path, sheet_name):
@@ -109,6 +218,29 @@ def build_powershell_command(script_path, file_path, sheet_name):
         (
             f"{utf8_preamble}& '{escaped_script_path}' "
             f"-ExcelPath '{escaped_file_path}' -SheetName '{escaped_sheet_name}'"
+        )
+    ]
+
+
+def build_powershell_populate_command(script_path, file_path):
+    """Executa Populate-SharePointList.ps1 sem o parâmetro -SheetName (processamento unificado)."""
+    utf8_preamble = (
+        "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); "
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+        "$OutputEncoding = [Console]::OutputEncoding; "
+        "chcp 65001 > $null; "
+    )
+    escaped_script_path = script_path.replace("'", "''")
+    escaped_file_path = file_path.replace("'", "''")
+
+    return [
+        "powershell.exe",
+        "-ExecutionPolicy", "Bypass",
+        "-NoProfile",
+        "-Command",
+        (
+            f"{utf8_preamble}& '{escaped_script_path}' "
+            f"-ExcelPath '{escaped_file_path}'"
         )
     ]
 
@@ -213,103 +345,6 @@ def score_decoded_text(text):
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def check_and_shutdown_if_needed():
-    """Verifica se deve desligar o servidor"""
-    global SESSIONS_EVER_EXISTED, SHUTDOWN_PENDING, SHUTDOWN_AT, SHUTDOWN_TRIGGERED, SHUTDOWN_REASON
-    
-    now = datetime.now()
-    
-    # Limpa sessões expiradas
-    for session_id, session_data in list(ACTIVE_SESSIONS.items()):
-        if (now - session_data['last_heartbeat']).total_seconds() > HEARTBEAT_TIMEOUT:
-            del ACTIVE_SESSIONS[session_id]
-            print(f"[{now.strftime('%H:%M:%S')}] Sessão expirada/fechada: {session_id}")
-    
-    # Log de estado atual
-    if len(ACTIVE_SESSIONS) > 0:
-        print(f"[{now.strftime('%H:%M:%S')}] Heartbeat OK - {len(ACTIVE_SESSIONS)} sessões ativas.")
-    
-    # Não encerra o servidor enquanto houver jobs ativos (validação/upload em andamento)
-    if ACTIVE_JOBS > 0:
-        return
-
-    # Se uma nova sessão aparecer, cancela desligamento pendente
-    if len(ACTIVE_SESSIONS) > 0 and SHUTDOWN_PENDING:
-        if SHUTDOWN_REASON == 'no_sessions':
-            SHUTDOWN_PENDING = False
-            SHUTDOWN_AT = None
-            SHUTDOWN_TRIGGERED = False
-            SHUTDOWN_REASON = None
-            print(f"[{now.strftime('%H:%M:%S')}] Sessão retomada - desligamento cancelado.")
-
-    inactivity_elapsed = (now - LAST_USER_ACTIVITY).total_seconds()
-
-    # Inatividade do usuário também inicia o fluxo de desligamento mesmo com página aberta.
-    if inactivity_elapsed >= INACTIVITY_TIMEOUT_SECONDS:
-        if not SHUTDOWN_PENDING:
-            SHUTDOWN_PENDING = True
-            SHUTDOWN_AT = now + timedelta(seconds=SHUTDOWN_GRACE_SECONDS)
-            SHUTDOWN_REASON = 'inactivity'
-            print(
-                f"\n[{now.strftime('%H:%M:%S')}] Inatividade detectada ({int(inactivity_elapsed)}s) - "
-                f"Encerrando servidor em {SHUTDOWN_GRACE_SECONDS}s...\n"
-            )
-
-        if SHUTDOWN_AT is not None and now >= SHUTDOWN_AT and not SHUTDOWN_TRIGGERED:
-            SHUTDOWN_TRIGGERED = True
-            print(f"[{now.strftime('%H:%M:%S')}] Encerrando servidor por inatividade.")
-            threading.Thread(target=terminate_server_process, daemon=True).start()
-        return
-
-    # Se houve atividade novamente, cancela desligamento pendente por inatividade.
-    if SHUTDOWN_PENDING and SHUTDOWN_REASON == 'inactivity':
-        SHUTDOWN_PENDING = False
-        SHUTDOWN_AT = None
-        SHUTDOWN_TRIGGERED = False
-        SHUTDOWN_REASON = None
-        print(f"[{now.strftime('%H:%M:%S')}] Atividade detectada - desligamento por inatividade cancelado.")
-
-    # Se já houve sessões registradas e agora não há nenhuma, encerra o servidor
-    if SESSIONS_EVER_EXISTED and len(ACTIVE_SESSIONS) == 0:
-        if not SHUTDOWN_PENDING:
-            SHUTDOWN_PENDING = True
-            SHUTDOWN_AT = now + timedelta(seconds=SHUTDOWN_GRACE_SECONDS)
-            SHUTDOWN_REASON = 'no_sessions'
-            print(
-                f"\n[{now.strftime('%H:%M:%S')}] Sem sessões ativas (Navegador fechado) - "
-                f"Encerrando servidor em {SHUTDOWN_GRACE_SECONDS}s...\n"
-            )
-
-        # Quando o contador chega ao fim, encerra o processo
-        if SHUTDOWN_AT is not None and now >= SHUTDOWN_AT and not SHUTDOWN_TRIGGERED:
-            SHUTDOWN_TRIGGERED = True
-            print(f"[{now.strftime('%H:%M:%S')}] Encerrando servidor agora.")
-            threading.Thread(target=terminate_server_process, daemon=True).start()
-
-
-@app.route('/activity/ping', methods=['POST'])
-def activity_ping():
-    """Registra atividade do usuário para controle de inatividade."""
-    global LAST_USER_ACTIVITY
-    LAST_USER_ACTIVITY = datetime.now()
-    check_and_shutdown_if_needed()
-    response = {
-        'status': 'ok',
-        'server_time': LAST_USER_ACTIVITY.isoformat()
-    }
-    response.update(get_shutdown_payload(LAST_USER_ACTIVITY))
-    return jsonify(response), 200
-
-def inactivity_monitor():
-    """Thread em segundo plano que monitora inatividade sem depender de novos heartbeats"""
-    print("Monitor de inatividade iniciado (Verificação a cada 2s).")
-    while True:
-        try:
-            check_and_shutdown_if_needed()
-        except Exception as e:
-            print(f"Erro no monitor: {e}")
-        time.sleep(2) # Verifica a cada 2 segundos agora
-
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -371,101 +406,6 @@ def update_template():
         }), 500
     finally:
         end_job()
-
-@app.route('/heartbeat', methods=['POST'])
-def heartbeat():
-    """Recebe e processa heartbeat da página aberta"""
-    global SESSIONS_EVER_EXISTED
-    
-    try:
-        data = request.get_json()
-        session_id = data.get('session_id')
-        
-        if not session_id:
-            return jsonify({'error': 'session_id não fornecido'}), 400
-        
-        # Registra ou atualiza a sessão
-        ACTIVE_SESSIONS[session_id] = {
-            'timestamp': datetime.now().isoformat(),
-            'last_heartbeat': datetime.now(),
-            'user_agent': request.headers.get('User-Agent', 'Unknown')
-        }
-        
-        SESSIONS_EVER_EXISTED = True
-        
-        # Verifica se deve encerrar (se há sessões expiradas)
-        check_and_shutdown_if_needed()
-
-        response = {
-            'status': 'ok',
-            'server_time': datetime.now().isoformat(),
-            'active_sessions': len(ACTIVE_SESSIONS)
-        }
-        response.update(get_shutdown_payload())
-
-        return jsonify(response), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/heartbeat/logout', methods=['POST'])
-def heartbeat_logout():
-    """Remove a sessão imediatamente (chamado no unload da página)"""
-    try:
-        data = request.json
-        session_id = data.get('session_id')
-        if session_id in ACTIVE_SESSIONS:
-            del ACTIVE_SESSIONS[session_id]
-            print(f"Sessão encerrada via logout: {session_id}")
-        
-        # Verifica se deve encerrar agora
-        check_and_shutdown_if_needed()
-        return jsonify({'status': 'ok'}), 200
-    except:
-        return jsonify({'status': 'error'}), 500
-
-@app.route('/sessions/status', methods=['GET'])
-def sessions_status():
-    """Retorna o status das sessões ativas"""
-    # Remove sessões expiradas
-    now = datetime.now()
-    expired_sessions = []
-    
-    for session_id, session_data in list(ACTIVE_SESSIONS.items()):
-        last_beat = session_data['last_heartbeat']
-        if (now - last_beat).total_seconds() > HEARTBEAT_TIMEOUT:
-            expired_sessions.append(session_id)
-            del ACTIVE_SESSIONS[session_id]
-    
-    return jsonify({
-        'active_sessions': len(ACTIVE_SESSIONS),
-        'sessions': {
-            session_id: {
-                'timestamp': data['timestamp'],
-                'seconds_since_heartbeat': (now - data['last_heartbeat']).total_seconds()
-            }
-            for session_id, data in ACTIVE_SESSIONS.items()
-        },
-        'expired_sessions': len(expired_sessions),
-        'server_time': datetime.now().isoformat()
-    }), 200
-
-@app.route('/sessions/active-count', methods=['GET'])
-def active_count():
-    """Retorna apenas a quantidade de sessões ativas"""
-    # Remove sessões expiradas
-    now = datetime.now()
-    for session_id, session_data in list(ACTIVE_SESSIONS.items()):
-        if (now - session_data['last_heartbeat']).total_seconds() > HEARTBEAT_TIMEOUT:
-            del ACTIVE_SESSIONS[session_id]
-    
-    now = datetime.now()
-    response = {
-        'active_count': len(ACTIVE_SESSIONS),
-        'server_time': now.isoformat()
-    }
-    response.update(get_shutdown_payload(now))
-
-    return jsonify(response), 200
 
 @app.route('/validate', methods=['POST'])
 def validate():
@@ -571,7 +511,6 @@ def run_script():
         return Response("Erro: Dados não enviados.", status=400)
 
     filename = data.get('filename', '')
-    sheet_name = data.get('sheet', 'PESSOAS')
 
     if not filename or not allowed_file(filename):
         return Response("Erro: Arquivo inválido.", status=400)
@@ -582,24 +521,24 @@ def run_script():
 
     # Caminho absoluto para o script PowerShell
     script_path = os.path.abspath("Populate-SharePointList.ps1")
-    
-    # Comando para executar o PowerShell
-    # -ExecutionPolicy Bypass é crucial para evitar bloqueios
-    cmd = build_powershell_command(script_path, file_path, sheet_name)
+
+    # Processamento unificado: PESSOAS + EQUIPAMENTOS (sem -SheetName)
+    cmd = build_powershell_populate_command(script_path, file_path)
 
     def generate():
         start_job()
         yield f"Arquivo recebido: {filename}\n"
-        yield f"Aba selecionada: {sheet_name}\n"
+        yield f"Processando abas PESSOAS e EQUIPAMENTOS...\n"
         yield f"Executando script PowerShell...\n{'-'*30}\n"
 
+        report_filename = None
+
         try:
-            # Executa o processo e captura stdout/stderr em tempo real
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, # Redireciona stderr para stdout
-                bufsize=1, # Line buffered
+                stderr=subprocess.STDOUT,
+                bufsize=1,
                 universal_newlines=False
             )
 
@@ -610,19 +549,51 @@ def run_script():
                 "--- RESULT: ERROR ---",
                 "Write-Error",
                 "Erro ao adicionar item",
+                "Não foi possível gerar um ID_Mobilizacao único",
             ]
 
-            # Lê linha a linha e envia para o navegador
+            # Acumulador para extrair o bloco JSON do relatório
+            output_buffer: list[str] = []
+            in_report_json = False
+            report_json_lines: list[str] = []
+
+            REPORT_START = "---REPORT_JSON_START---"
+            REPORT_END   = "---REPORT_JSON_END---"
+
             while True:
                 chunk = process.stdout.readline()
                 if not chunk:
                     break
                 decoded = decode_powershell_output(chunk)
+
+                stripped = decoded.strip()
+
+                # Captura bloco JSON do relatório sem emitir para o stream
+                if stripped == REPORT_START:
+                    in_report_json = True
+                    continue
+                if stripped == REPORT_END:
+                    in_report_json = False
+                    continue
+                if in_report_json:
+                    report_json_lines.append(stripped)
+                    continue
+
                 if any(marker in decoded for marker in error_markers):
                     detected_error_in_output = True
                 yield decoded
 
             process.wait()
+
+            # ── Gerar Excel do relatório ──────────────────────────────────────
+            if report_json_lines:
+                try:
+                    report_data = json.loads("".join(report_json_lines))
+                    report_filename, _ = generate_report_excel(report_data)
+                    yield f"\n---REPORT_FILE:{report_filename}---\n"
+                except Exception as exc:
+                    yield f"\n[AVISO] Não foi possível gerar o relatório Excel: {exc}\n"
+
             if process.returncode == 0 and not detected_error_in_output:
                 yield f"\n{'-'*30}\n[SUCESSO] Processo finalizado com código 0.\n"
             else:
@@ -631,17 +602,59 @@ def run_script():
         except Exception as e:
             yield f"\n[ERRO DE EXECUÇÃO]: {str(e)}\n"
         finally:
-            # Limpeza (opcional: remover arquivo após uso)
-            # if os.path.exists(file_path):
-            #     os.remove(file_path)
             end_job()
 
     return Response(stream_with_context(generate()), content_type='text/plain; charset=utf-8')
 
+@app.route('/shutdown', methods=['POST'])
+def shutdown():
+    """Encerra o servidor Flask."""
+    def _shutdown():
+        os._exit(0)
+    t = threading.Timer(0.5, _shutdown)
+    t.daemon = True
+    t.start()
+    return jsonify({'message': 'Servidor encerrado.'}), 200
+
+
+@app.route('/list-reports')
+def list_reports():
+    """Lista os relatórios Excel gerados, ordenados do mais recente para o mais antigo."""
+    reports_abs = os.path.abspath(REPORTS_FOLDER)
+    if not os.path.isdir(reports_abs):
+        return jsonify({'reports': []})
+    files = []
+    for fname in os.listdir(reports_abs):
+        if fname.lower().endswith('.xlsx'):
+            fpath = os.path.join(reports_abs, fname)
+            try:
+                mtime = os.path.getmtime(fpath)
+                size  = os.path.getsize(fpath)
+            except OSError:
+                continue
+            files.append({'name': fname, 'mtime': mtime, 'size': size})
+    files.sort(key=lambda f: f['mtime'], reverse=True)
+    for f in files:
+        from datetime import datetime as _dt
+        f['modified'] = _dt.fromtimestamp(f['mtime']).strftime('%d/%m/%Y %H:%M:%S')
+        del f['mtime']
+    return jsonify({'reports': files})
+
+
+@app.route('/download-report/<path:filename>')
+def download_report(filename):
+    """Serve o relatório Excel gerado após a submissão."""
+    safe_name = secure_filename(filename)
+    reports_abs = os.path.abspath(REPORTS_FOLDER)
+    file_abs    = os.path.abspath(os.path.join(reports_abs, safe_name))
+    # Previne path traversal
+    if not file_abs.startswith(reports_abs + os.sep):
+        return jsonify({'error': 'Acesso negado.'}), 403
+    if not os.path.exists(file_abs):
+        return jsonify({'error': 'Relatório não encontrado.'}), 404
+    return send_from_directory(reports_abs, safe_name, as_attachment=True)
+
+
 if __name__ == '__main__':
-    # Inicia monitor de inatividade em background
-    threading.Thread(target=inactivity_monitor, daemon=True).start()
-    
-    # Roda o servidor acessível localmente
     print("Servidor rodando em http://localhost:5000")
     app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)

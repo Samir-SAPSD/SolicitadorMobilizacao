@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true)]
     [string]$TemplatePath
 )
@@ -65,7 +65,9 @@ Write-Host "Conectando ao SharePoint..." -ForegroundColor Cyan
 Connect-PnPOnline -Url $SiteUrl -UseWebLogin -ErrorAction Stop -WarningAction SilentlyContinue
 
 Write-Host "Consultando campos Choice da lista..." -ForegroundColor Cyan
-$choiceFields = Get-PnPField -List $ListId | Where-Object {
+$allFields = Get-PnPField -List $ListId | Select-Object Title, InternalName, TypeAsString, Choices, Hidden, ReadOnlyField, Sealed
+
+$choiceFields = $allFields | Where-Object {
     ($_.TypeAsString -eq "Choice" -or $_.TypeAsString -eq "MultiChoice") -and
     -not $_.Hidden -and
     -not $_.ReadOnlyField -and
@@ -80,6 +82,21 @@ if (-not $choiceFields -or $choiceFields.Count -eq 0) {
 
 $choiceByTitle = @{}
 $choiceByInternalName = @{}
+$fieldByTitle = @{}
+$fieldByInternalName = @{}
+
+foreach ($field in $allFields) {
+    $titleKey = "$($field.Title)".Trim().ToLowerInvariant()
+    $internalKey = "$($field.InternalName)".Trim().ToLowerInvariant()
+
+    if (-not [string]::IsNullOrWhiteSpace($titleKey)) {
+        $fieldByTitle[$titleKey] = $field
+    }
+    if (-not [string]::IsNullOrWhiteSpace($internalKey)) {
+        $fieldByInternalName[$internalKey] = $field
+    }
+}
+
 foreach ($field in $choiceFields) {
     $titleKey = "$($field.Title)".Trim().ToLowerInvariant()
     $internalKey = "$($field.InternalName)".Trim().ToLowerInvariant()
@@ -111,6 +128,58 @@ try {
         throw "A aba 'Lista Suspensa' não foi encontrada no template."
     }
 
+    # Atualiza cabeçalhos das abas de entrada para exibir DisplayName sem perder referência ao InternalName
+    $headerSheets = @("PESSOAS", "EQUIPAMENTOS")
+    foreach ($sheetName in $headerSheets) {
+        try {
+            $wsHeader = $workbook.Worksheets.Item($sheetName)
+        } catch {
+            Write-Warning "A aba '$sheetName' não foi encontrada no template."
+            continue
+        }
+
+        $usedRangeHeader = $wsHeader.UsedRange
+        $lastHeaderColumnSheet = [Math]::Max($usedRangeHeader.Columns.Count, 1)
+
+        for ($col = 1; $col -le $lastHeaderColumnSheet; $col++) {
+            $headerRaw = $wsHeader.Cells.Item(1, $col).Value2
+            $header = "$headerRaw".Trim()
+            if ([string]::IsNullOrWhiteSpace($header)) {
+                continue
+            }
+
+            $match = $null
+            $headerKey = $header.ToLowerInvariant()
+            $internalHint = $null
+
+            # Suporta cabeçalho já no formato "Display [Internal]"
+            if ($header -match '^(?<disp>.+?)\s*\[(?<internal>[^\[\]]+)\]\s*$') {
+                $internalKey = "$($matches['internal'])".Trim().ToLowerInvariant()
+                $internalHint = $internalKey
+                if ($fieldByInternalName.ContainsKey($internalKey)) {
+                    $match = $fieldByInternalName[$internalKey]
+                }
+            }
+
+            if (-not $match) {
+                if ($fieldByInternalName.ContainsKey($headerKey)) {
+                    $match = $fieldByInternalName[$headerKey]
+                } elseif ($fieldByTitle.ContainsKey($headerKey)) {
+                    $match = $fieldByTitle[$headerKey]
+                }
+            }
+
+            if (-not $match -and -not [string]::IsNullOrWhiteSpace($internalHint) -and $fieldByInternalName.ContainsKey($internalHint)) {
+                $match = $fieldByInternalName[$internalHint]
+            }
+
+            if ($match) {
+                $newHeader = "$($match.Title) [$($match.InternalName)]"
+                $wsHeader.Cells.Item(1, $col).Value2 = $newHeader
+            }
+        }
+    }
+
     $usedRange = $worksheet.UsedRange
     $lastHeaderColumn = [Math]::Max($usedRange.Columns.Count, 1)
 
@@ -126,8 +195,15 @@ try {
 
         $headerKey = $header.ToLowerInvariant()
         $field = $null
+        $internalHint = $null
 
-        if ($choiceByTitle.ContainsKey($headerKey)) {
+        if ($header -match '^(?<disp>.+?)\s*\[(?<internal>[^\[\]]+)\]\s*$') {
+            $internalHint = "$($matches['internal'])".Trim().ToLowerInvariant()
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($internalHint) -and $choiceByInternalName.ContainsKey($internalHint)) {
+            $field = $choiceByInternalName[$internalHint]
+        } elseif ($choiceByTitle.ContainsKey($headerKey)) {
             $field = $choiceByTitle[$headerKey]
         } elseif ($choiceByInternalName.ContainsKey($headerKey)) {
             $field = $choiceByInternalName[$headerKey]

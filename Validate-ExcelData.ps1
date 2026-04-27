@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory=$false)]
     [string]$ExcelPath = ".\DadosParaImportar.xlsx",
     [Parameter(Mandatory=$false)]
@@ -467,6 +467,29 @@ function ConvertTo-DateFromExcel {
     }
 }
 
+function Get-ColumnMappingKey {
+    param([string]$ColumnName)
+
+    if ([string]::IsNullOrWhiteSpace($ColumnName)) {
+        return [PSCustomObject]@{ DisplayKey = ""; InternalKey = "" }
+    }
+
+    $col = "$ColumnName".Trim()
+    if ($col -match '_x005F_') {
+        $col = $col -replace '_x005F_', '_'
+    }
+
+    # Permite cabeçalho no formato: "Display Name [InternalName]"
+    if ($col -match '^(?<disp>.+?)\s*\[(?<internal>[^\[\]]+)\]\s*$') {
+        $disp = "$($matches['disp'])".Trim().ToLowerInvariant()
+        $internal = "$($matches['internal'])".Trim().ToLowerInvariant()
+        return [PSCustomObject]@{ DisplayKey = $disp; InternalKey = $internal }
+    }
+
+    $key = $col.ToLowerInvariant()
+    return [PSCustomObject]@{ DisplayKey = $key; InternalKey = $key }
+}
+
 function Get-MappedItemValues {
     param(
         [PSCustomObject]$Row,
@@ -481,18 +504,20 @@ function Get-MappedItemValues {
         $val = $_.Value
         $colName = $_.Name.Trim()
 
-        if ($colName -match '_x005F_') {
-            $colName = $colName -replace '_x005F_', '_'
-        }
+        $colMap = Get-ColumnMappingKey -ColumnName $colName
+        $colNameNormalized = if ($colMap.DisplayKey) { $colMap.DisplayKey } else { "$colName".ToLowerInvariant() }
+        $internalHint = $colMap.InternalKey
 
         if ($null -eq $val -or [string]::IsNullOrWhiteSpace("$val")) {
             return
         }
 
         $fieldInfo = $null
-        $colNameKey = $colName.ToLowerInvariant()
-        if ($FieldMap.ContainsKey($colNameKey)) {
-            $fieldInfo = $FieldMap[$colNameKey]
+        if (-not [string]::IsNullOrWhiteSpace($internalHint) -and $FieldMap.ContainsKey($internalHint)) {
+            $fieldInfo = $FieldMap[$internalHint]
+        }
+        elseif ($FieldMap.ContainsKey($colNameNormalized)) {
+            $fieldInfo = $FieldMap[$colNameNormalized]
         }
         if ($fieldInfo) {
             $realColName = $fieldInfo.InternalName

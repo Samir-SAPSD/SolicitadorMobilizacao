@@ -65,19 +65,39 @@ if not exist "!PYW_EXE!" (
 )
 
 echo Usando Executavel: "!PY_EXE!"
-echo Verificando dependencias...
-"!PY_EXE!" -m pip install -r requirements.txt --quiet
+
+:: Verifica se o servidor ja esta rodando na porta 5000
+echo Verificando se servidor ja esta em execucao...
+"!PY_EXE!" -c "import socket; s=socket.socket(); s.settimeout(1); r=s.connect_ex(('127.0.0.1',5000)); s.close(); exit(0 if r==0 else 1)" >nul 2>nul
+
+if %ERRORLEVEL% equ 0 (
+    echo Servidor ja esta em execucao. Abrindo navegador...
+    start http://localhost:5000
+    timeout /t 2 >nul
+    exit
+)
 
 echo --- Iniciando Servidor (Modo Silencioso) ---
-echo Abrindo navegador...
 
-:: Inicia o servidor de forma invisivel usando pythonw com caminho completo
+:: Instala dependencias
+"!PY_EXE!" -m pip install -r requirements.txt --quiet
+
+:: Inicia o servidor de forma invisivel usando pythonw
 start "" /b "!PYW_EXE!" server.py
 
+:: Aguarda ate 15 segundos para o servidor ficar pronto
+echo Aguardando servidor iniciar...
+for /l %%i in (1,1,15) do (
+    timeout /t 1 /nobreak >nul
+    "!PY_EXE!" -c "import socket; s=socket.socket(); s.settimeout(0.5); r=s.connect_ex(('127.0.0.1',5000)); s.close(); exit(0 if r==0 else 1)" >nul 2>nul
+    if !ERRORLEVEL! equ 0 goto :server_ready
+)
+
+:server_ready
 :: Abre o navegador
 start http://localhost:5000
 
 echo.
-echo Tudo pronto! O servidor fechara automaticamente ao fechar o navegador.
-timeout /t 5 >nul
+echo Servidor iniciado! Feche esta janela a qualquer momento.
+timeout /t 3 >nul
 exit

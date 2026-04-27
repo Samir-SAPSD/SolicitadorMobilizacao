@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -62,54 +62,100 @@
         .card-body {
             padding: 24px;
         }
+        /* logArea oculto — usado só como buffer para download do log */
         #logArea {
-            background-color: var(--vestas-night-sky);
-            color: var(--vestas-blue-sky-03);
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 0.9rem;
-            height: 300px;
-            overflow-y: auto;
-            padding: 15px;
-            border-radius: 8px;
-            white-space: pre-wrap;
+            display: none;
         }
         .spinner-border {
             display: none;
         }
-        #heartbeat-status {
-            font-size: 0.85rem;
+        /* ── Barra de progresso ─────────────────────────────── */
+        #progressSection {
+            display: none;
+            margin-top: 22px;
+        }
+        .progress {
+            height: 14px;
+            border-radius: 10px;
+            background-color: var(--vestas-light-grey);
+        }
+        .progress-bar {
+            border-radius: 10px;
+            transition: width 0.5s ease;
+        }
+        #progressStage {
             font-weight: 600;
-            padding: 10px 14px;
-            border-radius: 8px;
-            background-color: rgba(25, 115, 110, 0.1);
-            color: var(--vestas-earth-green);
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            border: 1px solid rgba(25, 115, 110, 0.2);
+            font-size: 0.92rem;
+            color: var(--vestas-night-sky);
         }
-        .heartbeat-left {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            min-width: 0;
+        #progressSubtext {
+            font-size: 0.78rem;
+            color: var(--vestas-medium-grey);
+            margin-top: 4px;
+            min-height: 18px;
         }
-        .shutdown-countdown {
-            font-size: 0.8rem;
-            font-weight: 500;
+        #sheetProgressSection {
+            display: none;
+            margin-top: 12px;
+            border: 1px solid var(--vestas-light-grey);
+            border-radius: 10px;
+            padding: 10px 12px;
+            background-color: #ffffff;
+        }
+        .sheet-progress-title {
+            font-size: 0.75rem;
+            font-weight: 700;
             color: var(--vestas-dark-grey);
-            white-space: nowrap;
-            opacity: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
         }
-        #heartbeat-status::before {
-            content: "🫀";
-            animation: pulse 1s infinite;
+        .sheet-progress-row {
+            margin-bottom: 10px;
         }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+        .sheet-progress-row:last-child {
+            margin-bottom: 0;
+        }
+        .sheet-progress-label {
+            font-size: 0.78rem;
+            color: var(--vestas-night-sky);
+            font-weight: 600;
+        }
+        .sheet-progress-count {
+            font-size: 0.74rem;
+            color: var(--vestas-medium-grey);
+        }
+        .sheet-progress-bar {
+            height: 8px;
+            border-radius: 6px;
+        }
+        /* ── Botão engrenagem ───────────────────────────────── */
+        .btn-gear {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.35);
+            color: #fff;
+            font-size: 1rem;
+            padding: 6px 14px;
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+        .btn-gear:hover {
+            background: rgba(255,255,255,0.12);
+            color: #fff;
+        }
+        /* ── Offcanvas de opções ────────────────────────────── */
+        #settingsOffcanvas .offcanvas-header {
+            background-color: var(--vestas-night-sky);
+            color: #fff;
+        }
+        .settings-section-title {
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--vestas-medium-grey);
+            margin-bottom: 8px;
+            margin-top: 4px;
         }
         .btn-vestas-primary {
             background-color: var(--vestas-blue-sky-01);
@@ -177,12 +223,6 @@
             color: var(--vestas-night-sky);
             font-weight: 600;
         }
-        .badge.online {
-            background-color: var(--vestas-earth-green) !important;
-        }
-        .badge.offline {
-            background-color: var(--vestas-earth-red) !important;
-        }
         .text-muted {
             color: var(--vestas-dark-grey) !important;
         }
@@ -192,6 +232,38 @@
             font-size: 0.8rem;
             margin-top: 30px;
             padding-bottom: 20px;
+        }
+        #reportDownloadBanner {
+            display: none;
+            margin-top: 16px;
+            padding: 14px 20px;
+            background-color: rgba(25, 115, 110, 0.08);
+            border: 1px solid rgba(25, 115, 110, 0.3);
+            border-radius: 10px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        #reportDownloadBanner.visible {
+            display: flex;
+        }
+        .btn-vestas-download {
+            background-color: var(--vestas-earth-green);
+            border-color: var(--vestas-earth-green);
+            color: #ffffff;
+            font-weight: 600;
+            padding: 10px 22px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+        .btn-vestas-download:hover {
+            background-color: var(--vestas-night-sky);
+            border-color: var(--vestas-night-sky);
+            color: #ffffff;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(31, 49, 68, 0.25);
         }
         .template-actions {
             display: flex;
@@ -205,72 +277,24 @@
             color: var(--vestas-dark-grey);
             min-height: 20px;
         }
-        #restartWatermarkOverlay {
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            min-height: 100vh;
-            z-index: 9999;
-            display: none;
-            pointer-events: all;
-            background-color: rgba(250, 251, 252, 0.92);
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            padding: 24px;
-            cursor: not-allowed;
-        }
-        #restartWatermarkOverlay.active {
-            display: flex;
-        }
-        .restart-watermark-panel {
-            max-width: 820px;
-            width: 100%;
-            border: 1px solid rgba(96, 109, 123, 0.35);
-            border-radius: 14px;
-            background-color: rgba(255, 255, 255, 0.94);
-            box-shadow: 0 6px 16px rgba(31, 49, 68, 0.12);
-            padding: 20px 16px;
-            position: relative;
-            overflow: hidden;
-        }
-        .restart-watermark-panel::before {
-            content: "REINICIAR O PROGRAMA • REINICIAR O PROGRAMA • REINICIAR O PROGRAMA";
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%) rotate(-15deg);
-            font-size: clamp(0.9rem, 2.1vw, 1.45rem);
-            color: rgba(31, 49, 68, 0.05);
-            letter-spacing: 0.1rem;
-            font-weight: 600;
-            white-space: nowrap;
-            pointer-events: none;
-            user-select: none;
-        }
-        .restart-watermark-title {
-            position: relative;
-            font-size: clamp(1rem, 2.2vw, 1.4rem);
-            color: var(--vestas-dark-grey);
-            font-weight: 700;
-            margin-bottom: 6px;
-            letter-spacing: 0.01rem;
-        }
-        .restart-watermark-message {
-            position: relative;
-            color: var(--vestas-dark-grey);
-            font-size: 0.95rem;
-            font-weight: 500;
-            margin: 0;
-        }
     </style>
 </head>
 <body>
 
 <header class="vestas-header">
-    <div class="container text-center">
-        <div class="logo-container">
+    <div class="container d-flex align-items-center justify-content-between">
+        <div style="width:120px">
+            <button class="btn btn-gear" data-bs-toggle="offcanvas" data-bs-target="#settingsOffcanvas" title="Opções">
+                ⚙️ Opções
+            </button>
+        </div>
+        <div class="logo-container mx-auto">
             <img src="/static/Vestas Primary Logo RGB.png" alt="Vestas" class="vestas-logo">
+        </div>
+        <div style="width:120px" class="d-flex justify-content-end">
+            <button id="btnShutdown" class="btn btn-sm" style="background-color:#772219;border-color:#772219;color:#fff;font-weight:600;" title="Encerrar o servidor">
+                Desligar
+            </button>
         </div>
     </div>
 </header>
@@ -283,34 +307,12 @@
                     <h4 class="mb-0">Solicitador de Mobilizações</h4>
                 </div>
                 <div class="card-body">
-                    <div id="heartbeat-status">
-                        <span class="heartbeat-left" id="heartbeatText">Iniciando...</span>
-                        <span class="shutdown-countdown" id="shutdownCountdown">Servidor ativo</span>
-                    </div>
-                    <p class="text-muted">Selecione o arquivo Excel e a aba correspondente para iniciar a carga de dados.</p>
-                    
-                    <div class="mb-3 template-actions">
-                        <button type="button" class="btn btn-outline-primary btn-sm" id="btnUpdateTemplate">
-                            Atualizar Template
-                        </button>
-                        <span id="templateUpdateInfo">Última atualização: nunca</span>
-                        <a href="/download-template" class="btn btn-outline-secondary btn-sm">
-                            📥 Baixar Template Excel
-                        </a>
-                    </div>
+                    <p class="text-muted">Selecione o arquivo Excel para iniciar a importação. As abas <strong>PESSOAS</strong> e <strong>EQUIPAMENTOS</strong> serão processadas automaticamente.</p>
 
                     <form id="uploadForm" onsubmit="return false;">
                         <div class="mb-3">
                             <label for="excelFile" class="form-label">Arquivo Excel (.xlsx)</label>
                             <input class="form-control" type="file" id="excelFile" accept=".xlsx" required>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="sheetName" class="form-label">Aba (Planilha)</label>
-                            <select class="form-select" id="sheetName">
-                                <option value="PESSOAS" selected>PESSOAS</option>
-                                <option value="EQUIPAMENTOS">EQUIPAMENTOS</option>
-                            </select>
                         </div>
 
                         <div class="d-grid gap-2">
@@ -344,17 +346,55 @@
                 </div>
             </div>
 
-            <div class="card mt-2">
-                <div class="card-header log-header d-flex justify-content-between align-items-center">
-                    <span>Logs de Execução</span>
-                    <div>
-                        <button class="btn btn-sm btn-outline-secondary me-2" id="btnCopyLogs">Copiar Relatório</button>
-                        <span id="connectionBadge" class="badge offline">Offline</span>
+            <!-- Barra de progresso -->
+            <div id="progressSection">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span id="progressStage">Aguardando...</span>
+                    <span id="progressPct" style="font-size:0.85rem;color:var(--vestas-dark-grey);font-weight:600;">0%</span>
+                </div>
+                <div class="progress">
+                    <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated"
+                         role="progressbar" style="width:0%;background-color:var(--vestas-blue-sky-01);"
+                         aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                </div>
+                <div id="progressSubtext"></div>
+
+                <div id="sheetProgressSection">
+                    <div class="sheet-progress-title">Progresso por Aba</div>
+
+                    <div class="sheet-progress-row">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="sheet-progress-label">PESSOAS</span>
+                            <span class="sheet-progress-count" id="peopleProgressCount">0/0</span>
+                        </div>
+                        <div class="progress sheet-progress-bar">
+                            <div id="peopleProgressBar" class="progress-bar" role="progressbar" style="width:0%;background-color:var(--vestas-blue-sky-02);" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                    </div>
+
+                    <div class="sheet-progress-row">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="sheet-progress-label">EQUIPAMENTOS</span>
+                            <span class="sheet-progress-count" id="equipProgressCount">0/0</span>
+                        </div>
+                        <div class="progress sheet-progress-bar">
+                            <div id="equipProgressBar" class="progress-bar" role="progressbar" style="width:0%;background-color:var(--vestas-earth-orange);" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
                     </div>
                 </div>
-                <div class="card-body p-0">
-                    <div id="logArea">Aguardando início...</div>
+            </div>
+
+            <!-- Buffer de log (oculto) — lido pelo botão de download -->
+            <div id="logArea"></div>
+
+            <div id="reportDownloadBanner">
+                <div>
+                    <strong style="color: var(--vestas-earth-green);">&#10003; Relatório de mobilização gerado com sucesso</strong>
+                    <div style="font-size:0.82rem; color: var(--vestas-dark-grey); margin-top:2px;" id="reportDownloadInfo">Relatório de mobilização da submissão disponível para download.</div>
                 </div>
+                <a id="btnDownloadReport" href="#" class="btn btn-vestas-download" download>
+                    📊 Baixar Relatório de Mobilização
+                </a>
             </div>
 
             <div class="footer-info">
@@ -364,12 +404,60 @@
     </div>
 </div>
 
-<div id="restartWatermarkOverlay" aria-live="assertive" aria-hidden="true">
-    <div class="restart-watermark-panel">
-        <div class="restart-watermark-title">Programa precisa ser reiniciado</div>
-        <p class="restart-watermark-message" id="restartWatermarkMessage">
-            O servidor está em processo de desligamento. Reinicie o programa para continuar.
-        </p>
+<!-- Offcanvas de Opções -->
+<div class="offcanvas offcanvas-start" tabindex="-1" id="settingsOffcanvas" aria-labelledby="settingsOffcanvasLabel" style="max-width:300px;">
+    <div class="offcanvas-header">
+        <h5 class="offcanvas-title" id="settingsOffcanvasLabel">⚙️ Opções</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Fechar"></button>
+    </div>
+    <div class="offcanvas-body">
+        <p class="settings-section-title">Template</p>
+        <div class="d-grid gap-2 mb-1">
+            <button type="button" class="btn btn-outline-primary btn-sm" id="btnUpdateTemplate">
+                🔄 Atualizar Template
+            </button>
+            <a href="/download-template" class="btn btn-outline-secondary btn-sm">
+                📥 Baixar Template Excel
+            </a>
+        </div>
+        <div id="templateUpdateInfo" style="font-size:0.78rem;color:var(--vestas-dark-grey);margin-bottom:16px;">Última atualização: nunca</div>
+
+        <hr class="my-3">
+
+        <p class="settings-section-title">Relatórios de Mobilização</p>
+        <div class="d-grid gap-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm"
+                    data-bs-toggle="modal" data-bs-target="#reportsModal">
+                📂 Ver Relatórios de Mobilização
+            </button>
+        </div>
+
+        <hr class="my-3">
+
+        <p class="settings-section-title">Logs de Execução</p>
+        <div class="d-grid gap-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="btnDownloadLog" disabled>
+                📄 Baixar Arquivo de Log (.txt)
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Relatórios Anteriores -->
+<div class="modal fade" id="reportsModal" tabindex="-1" aria-labelledby="reportsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header" style="background-color: var(--vestas-night-sky); color: #ffffff;">
+                <h5 class="modal-title" id="reportsModalLabel">📂 Relatórios de Mobilização</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body" id="reportsModalBody">
+                <p class="text-muted">Carregando...</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -393,349 +481,131 @@
     </div>
 </div>
 
-<!-- Modal de Status do Servidor -->
-<div class="modal fade" id="serverStatusModal" tabindex="-1" aria-labelledby="serverStatusModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header" style="background-color: var(--vestas-night-sky); color: #ffffff;">
-                <h5 class="modal-title" id="serverStatusModalLabel">Status do Servidor</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
-            </div>
-            <div class="modal-body" id="serverStatusModalBody">
-                Verificando status do servidor...
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
-            </div>
-        </div>
-    </div>
-</div>
-
 <!-- Bootstrap JS Bundle -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
-    // Sistema de Heartbeat para monitorar se a página está aberta
-    class PageHeartbeat {
-        constructor(sessionIdPrefix = 'page_session', onShutdownPending = null, onServerOffline = null, onShutdownCountdown = null) {
-            this.sessionId = `${sessionIdPrefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            this.heartbeatInterval = 2000; // 2 segundos conforme solicitado
-            this.beatCount = 0;
-            this.onShutdownPending = onShutdownPending;
-            this.onServerOffline = onServerOffline;
-            this.onShutdownCountdown = onShutdownCountdown;
-            this.serverOfflineNotified = false;
-            this.shutdownPendingNotified = false;
-            this.init();
-        }
-
-        async init() {
-            this.heartbeatTimer = setInterval(() => this.sendHeartbeat(), this.heartbeatInterval);
-            setTimeout(() => this.sendHeartbeat(), 500);
-            window.addEventListener('beforeunload', () => this.onPageUnload());
-            window.addEventListener('unload', () => this.onPageUnload());
-            this.statusCheckTimer = setInterval(() => this.checkStatus(), 10000);
-        }
-
-        async sendHeartbeat() {
-            try {
-                const response = await fetch('/heartbeat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_id: this.sessionId })
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    this.beatCount++;
-                    this.updateStatusDisplay(data.active_sessions, true);
-                    this.handleShutdownSignals(data);
-                } else {
-                    this.updateStatusDisplay(0, false);
-                    this.notifyServerOffline();
-                }
-            } catch (error) {
-                this.updateStatusDisplay(0, false);
-                this.notifyServerOffline();
-            }
-        }
-
-        async checkStatus() {
-            try {
-                const response = await fetch('/sessions/active-count');
-                if (response.ok) {
-                    const data = await response.json();
-                    this.updateStatusDisplay(data.active_count, true);
-                    this.handleShutdownSignals(data);
-                } else {
-                    this.notifyServerOffline();
-                }
-            } catch (error) {
-                this.updateStatusDisplay(0, false);
-                this.notifyServerOffline();
-            }
-        }
-
-        handleShutdownSignals(data) {
-            if (this.serverOfflineNotified) {
-                return;
-            }
-
-            const pending = data?.shutdown_pending === true;
-            const remaining = Number(data?.shutdown_in_seconds ?? 0);
-            const inactivityRemaining = Number(data?.inactivity_remaining_seconds ?? 0);
-
-            if (typeof this.onShutdownCountdown === 'function') {
-                this.onShutdownCountdown(pending, pending ? remaining : null, inactivityRemaining);
-            }
-
-            if (data?.shutdown_pending && !this.shutdownPendingNotified) {
-                this.shutdownPendingNotified = true;
-                if (typeof this.onShutdownPending === 'function') {
-                    this.onShutdownPending(remaining);
-                }
-            } else if (!data?.shutdown_pending) {
-                this.shutdownPendingNotified = false;
-            }
-        }
-
-        notifyServerOffline() {
-            if (this.serverOfflineNotified) {
-                return;
-            }
-            this.serverOfflineNotified = true;
-            if (typeof this.onShutdownCountdown === 'function') {
-                this.onShutdownCountdown(true, 0);
-            }
-            if (typeof this.onServerOffline === 'function') {
-                this.onServerOffline();
-            }
-        }
-
-        updateStatusDisplay(count, isOnline) {
-            const statusElement = document.getElementById('heartbeatText');
-            const badge = document.getElementById('connectionBadge');
-            
-            if (statusElement) {
-                statusElement.textContent = `Página Status: ${isOnline ? 'Ativa' : 'Desconectada'} (${count} aberta${count !== 1 ? 's' : ''})`;
-            }
-            if (badge) {
-                badge.textContent = isOnline ? 'Online' : 'Offline';
-                badge.className = `badge ${isOnline ? 'online' : 'offline'}`;
-            }
-        }
-
-        onPageUnload() {
-            clearInterval(this.heartbeatTimer);
-            clearInterval(this.statusCheckTimer);
-            
-            // Tenta avisar ao servidor para encerrar mais rápido (Logout Instantâneo)
-            if (this.sessionId) {
-                fetch('/heartbeat/logout', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_id: this.sessionId }),
-                    keepalive: true // Permite que a requisição sobreviva ao fechamento da página
-                }).catch(() => {});
-            }
-        }
-
-        getBeatCount() { return this.beatCount; }
-        getSessionId() { return this.sessionId; }
-    }
-
     document.addEventListener('DOMContentLoaded', () => {
-        const serverStatusModalEl = document.getElementById('serverStatusModal');
-        const serverStatusModalBody = document.getElementById('serverStatusModalBody');
-        const serverStatusModal = new bootstrap.Modal(serverStatusModalEl);
-        const restartWatermarkOverlay = document.getElementById('restartWatermarkOverlay');
-        const restartWatermarkMessage = document.getElementById('restartWatermarkMessage');
-
-        const clearBootstrapBackdrops = () => {
-            document.querySelectorAll('.modal-backdrop').forEach((el) => el.remove());
-            document.body.classList.remove('modal-open');
-            document.body.style.removeProperty('padding-right');
-            document.body.style.removeProperty('overflow');
-        };
-
-        const activateRestartOverlay = (message) => {
-            if (!restartWatermarkOverlay) {
-                return;
-            }
-
-            if (message && restartWatermarkMessage) {
-                restartWatermarkMessage.textContent = message;
-            }
-
-            // Remove qualquer saturação/backdrop de modal para manter a tela limpa.
-            try {
-                serverStatusModal.hide();
-            } catch {
-                // Ignora erro de estado do modal.
-            }
-            clearBootstrapBackdrops();
-
-            restartWatermarkOverlay.classList.add('active');
-            restartWatermarkOverlay.setAttribute('aria-hidden', 'false');
-            document.body.style.overflow = 'hidden';
-        };
-
-        const showServerPopup = (message) => {
-            activateRestartOverlay(message || 'O servidor está em processo de desligamento. Reinicie o programa para continuar.');
-        };
-
-        const shutdownCountdownEl = document.getElementById('shutdownCountdown');
-        let remainingShutdownSeconds = null;
-        let shutdownCountdownTimer = null;
-
-        const renderShutdownCountdown = () => {
-            if (!shutdownCountdownEl) {
-                return;
-            }
-
-            if (remainingShutdownSeconds === null) {
-                shutdownCountdownEl.textContent = 'Servidor ativo';
-                return;
-            }
-
-            const safeSeconds = Math.max(0, Math.floor(remainingShutdownSeconds));
-            shutdownCountdownEl.textContent = `Desliga em ${safeSeconds}s`;
-        };
-
-        const stopShutdownCountdown = () => {
-            if (shutdownCountdownTimer) {
-                clearInterval(shutdownCountdownTimer);
-                shutdownCountdownTimer = null;
-            }
-        };
-
-        const startShutdownCountdown = () => {
-            if (shutdownCountdownTimer) {
-                return;
-            }
-
-            shutdownCountdownTimer = setInterval(() => {
-                if (remainingShutdownSeconds === null) {
-                    stopShutdownCountdown();
-                    return;
-                }
-
-                if (remainingShutdownSeconds > 0) {
-                    remainingShutdownSeconds -= 1;
-                }
-                renderShutdownCountdown();
-            }, 1000);
-        };
-
-        const updateShutdownCountdown = (pending, secondsLeft, inactivitySeconds = null) => {
-            if (!pending) {
-                if (inactivitySeconds !== null && Number.isFinite(Number(inactivitySeconds))) {
-                    remainingShutdownSeconds = Math.max(0, Number(inactivitySeconds));
-                    renderShutdownCountdown();
-                    startShutdownCountdown();
-                    return;
-                }
-
-                remainingShutdownSeconds = null;
-                stopShutdownCountdown();
-                renderShutdownCountdown();
-                return;
-            }
-
-            const serverSeconds = Math.max(0, Number(secondsLeft) || 0);
-
-            if (remainingShutdownSeconds === null) {
-                remainingShutdownSeconds = serverSeconds;
-            } else {
-                // Mantem a contagem sempre regressiva, sem "subir" por jitter de rede.
-                remainingShutdownSeconds = Math.min(remainingShutdownSeconds, serverSeconds);
-            }
-
-            renderShutdownCountdown();
-            startShutdownCountdown();
-        };
-
-        const sendActivityPing = async () => {
-            try {
-                const response = await fetch('/activity/ping', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ts: Date.now() })
-                });
-
-                if (!response.ok) {
-                    return;
-                }
-
-                const data = await response.json();
-                updateShutdownCountdown(
-                    data?.shutdown_pending === true,
-                    Number(data?.shutdown_in_seconds ?? 0),
-                    Number(data?.inactivity_remaining_seconds ?? 0)
-                );
-            } catch {
-                // Mantem silencioso para não poluir UX em caso de falhas temporárias.
-            }
-        };
-
-        let lastActivityPingAt = 0;
-        const activityPingThrottleMs = 3000;
-        const registerUserActivity = () => {
-            const now = Date.now();
-            if (now - lastActivityPingAt < activityPingThrottleMs) {
-                return;
-            }
-            lastActivityPingAt = now;
-            sendActivityPing();
-        };
-
-        ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'].forEach((eventName) => {
-            window.addEventListener(eventName, registerUserActivity, { passive: true });
-        });
-
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
-                registerUserActivity();
-            }
-        });
-
-        const pageHeartbeat = new PageHeartbeat(
-            'page_session',
-            (secondsLeft) => {
-                showServerPopup(`Servidor será desligado em instantes (${secondsLeft}s).`);
-            },
-            () => {
-                showServerPopup('Servidor foi desligado. Reabra o sistema para iniciar novamente.');
-            },
-            (pending, secondsLeft, inactivitySeconds) => {
-                updateShutdownCountdown(pending, secondsLeft, inactivitySeconds);
-            }
-        );
-
-        // Marca atividade inicial ao abrir a página.
-        sendActivityPing();
-        const logArea = document.getElementById('logArea');
-        const form = document.getElementById('uploadForm');
-        const btnSubmit = document.getElementById('btnSubmit');
-        const btnText = document.getElementById('btnText');
-        const spinner = document.querySelector('.spinner-border');
-        const statDashboard = document.getElementById('statDashboard');
-        const btnCopyLogs = document.getElementById('btnCopyLogs');
+        const logArea        = document.getElementById('logArea');
+        const form           = document.getElementById('uploadForm');
+        const btnSubmit      = document.getElementById('btnSubmit');
+        const btnText        = document.getElementById('btnText');
+        const spinner        = document.querySelector('.spinner-border');
+        const statDashboard  = document.getElementById('statDashboard');
         const btnUpdateTemplate = document.getElementById('btnUpdateTemplate');
         const templateUpdateInfo = document.getElementById('templateUpdateInfo');
-        
-        const totalItemsEl = document.getElementById('totalItems');
-        const successCountEl = document.getElementById('successCount');
-        const errorCountEl = document.getElementById('errorCount');
 
+        const totalItemsEl  = document.getElementById('totalItems');
+        const successCountEl = document.getElementById('successCount');
+        const errorCountEl  = document.getElementById('errorCount');
+
+        // ── Progresso ─────────────────────────────────────────────────────
+        const progressSection = document.getElementById('progressSection');
+        const progressBar     = document.getElementById('progressBar');
+        const progressStage   = document.getElementById('progressStage');
+        const progressPct     = document.getElementById('progressPct');
+        const progressSubtext = document.getElementById('progressSubtext');
+        const sheetProgressSection = document.getElementById('sheetProgressSection');
+        const peopleProgressBar = document.getElementById('peopleProgressBar');
+        const equipProgressBar = document.getElementById('equipProgressBar');
+        const peopleProgressCount = document.getElementById('peopleProgressCount');
+        const equipProgressCount = document.getElementById('equipProgressCount');
+
+        const sheetProgress = {
+            PESSOAS: { expected: 0, done: 0 },
+            EQUIPAMENTOS: { expected: 0, done: 0 },
+            uploadStarted: false
+        };
+
+        let _progressValue = 0;
+
+        const setProgress = (pct, stage, subtext = '') => {
+            _progressValue = Math.min(100, Math.max(0, pct));
+            progressBar.style.width = `${_progressValue}%`;
+            progressBar.setAttribute('aria-valuenow', _progressValue);
+            progressPct.textContent = `${Math.round(_progressValue)}%`;
+            if (stage !== undefined) progressStage.textContent = stage;
+            if (subtext !== undefined) progressSubtext.textContent = subtext;
+
+            if (_progressValue >= 100) {
+                progressBar.classList.remove('progress-bar-animated');
+                progressBar.style.backgroundColor = 'var(--vestas-earth-green)';
+            } else {
+                progressBar.classList.add('progress-bar-animated');
+                progressBar.style.backgroundColor = 'var(--vestas-blue-sky-01)';
+            }
+        };
+
+        const resetProgress = () => {
+            progressSection.style.display = 'block';
+            progressBar.classList.add('progress-bar-animated');
+            progressBar.style.backgroundColor = 'var(--vestas-blue-sky-01)';
+            setProgress(0, 'Aguardando...', '');
+        };
+
+        const setSheetBar = (barEl, countEl, done, expected) => {
+            const safeExpected = expected > 0 ? expected : 0;
+            const safeDone = Math.min(done, safeExpected || done);
+            const pct = safeExpected > 0 ? Math.round((safeDone / safeExpected) * 100) : 0;
+            barEl.style.width = `${pct}%`;
+            barEl.setAttribute('aria-valuenow', pct);
+            countEl.textContent = `${safeDone}/${safeExpected}`;
+        };
+
+        const refreshSheetProgressUI = () => {
+            setSheetBar(
+                peopleProgressBar,
+                peopleProgressCount,
+                sheetProgress.PESSOAS.done,
+                sheetProgress.PESSOAS.expected
+            );
+            setSheetBar(
+                equipProgressBar,
+                equipProgressCount,
+                sheetProgress.EQUIPAMENTOS.done,
+                sheetProgress.EQUIPAMENTOS.expected
+            );
+        };
+
+        const resetSheetProgress = () => {
+            sheetProgress.PESSOAS.expected = 0;
+            sheetProgress.PESSOAS.done = 0;
+            sheetProgress.EQUIPAMENTOS.expected = 0;
+            sheetProgress.EQUIPAMENTOS.done = 0;
+            sheetProgress.uploadStarted = false;
+            sheetProgressSection.style.display = 'none';
+            refreshSheetProgressUI();
+        };
+
+        // ── Log (buffer oculto) ───────────────────────────────────────────
+        const appendLog = (text) => {
+            logArea.textContent += text;
+        };
+
+        // ── Download do log ───────────────────────────────────────────────
+        const btnDownloadLog = document.getElementById('btnDownloadLog');
+        const enableLogDownload = () => {
+            if (btnDownloadLog) btnDownloadLog.disabled = false;
+        };
+
+        btnDownloadLog?.addEventListener('click', () => {
+            const text = logArea.textContent || '(sem log)';
+            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href     = url;
+            a.download = `log_mobilizacao_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        // ── Template ──────────────────────────────────────────────────────
         const formatDateTime = (isoDate) => {
-            if (!isoDate) {
-                return 'nunca';
-            }
+            if (!isoDate) return 'nunca';
             const parsed = new Date(isoDate);
-            if (Number.isNaN(parsed.getTime())) {
-                return 'nunca';
-            }
+            if (Number.isNaN(parsed.getTime())) return 'nunca';
             return parsed.toLocaleString('pt-BR');
         };
 
@@ -746,10 +616,7 @@
         const loadTemplateUpdateStatus = async () => {
             try {
                 const response = await fetch('/template-update-status');
-                if (!response.ok) {
-                    setTemplateUpdateText(null);
-                    return;
-                }
+                if (!response.ok) { setTemplateUpdateText(null); return; }
                 const data = await response.json();
                 setTemplateUpdateText(data.last_updated || null);
             } catch {
@@ -760,34 +627,24 @@
         const updateTemplate = async () => {
             const originalText = btnUpdateTemplate.textContent;
             btnUpdateTemplate.disabled = true;
-            btnUpdateTemplate.textContent = 'Atualizando...';
-
+            btnUpdateTemplate.textContent = '⏳ Atualizando...';
             try {
                 const response = await fetch('/update-template', { method: 'POST' });
                 const data = await response.json();
-
                 if (!response.ok || data.status !== 'success') {
                     const msg = data?.message || 'Falha ao atualizar template.';
-                    logArea.textContent += `\n[ERRO TEMPLATE] ${msg}\n`;
-                    if (data?.log) {
-                        logArea.textContent += `${data.log}\n`;
-                    }
-                    logArea.scrollTop = logArea.scrollHeight;
+                    appendLog(`\n[ERRO TEMPLATE] ${msg}\n`);
+                    if (data?.log) appendLog(`${data.log}\n`);
                     alert(msg);
                     return;
                 }
-
                 setTemplateUpdateText(data.last_updated || null);
-                logArea.textContent += `\n[TEMPLATE] ${data.message}\n`;
-                if (data.log) {
-                    logArea.textContent += `${data.log}\n`;
-                }
-                logArea.scrollTop = logArea.scrollHeight;
+                appendLog(`\n[TEMPLATE] ${data.message}\n`);
+                if (data.log) appendLog(`${data.log}\n`);
                 alert('Template atualizado com sucesso.');
             } catch (error) {
                 const msg = `Erro ao atualizar template: ${error.message}`;
-                logArea.textContent += `\n[ERRO TEMPLATE] ${msg}\n`;
-                logArea.scrollTop = logArea.scrollHeight;
+                appendLog(`\n[ERRO TEMPLATE] ${msg}\n`);
                 alert(msg);
             } finally {
                 btnUpdateTemplate.disabled = false;
@@ -795,34 +652,37 @@
             }
         };
 
-        // Lógica de cópia de logs
-        btnCopyLogs.addEventListener('click', () => {
-            const text = logArea.innerText;
-            navigator.clipboard.writeText(text).then(() => {
-                const originalText = btnCopyLogs.textContent;
-                btnCopyLogs.textContent = 'Copiado!';
-                setTimeout(() => btnCopyLogs.textContent = originalText, 2000);
-            });
-        });
+        // ── Stats ─────────────────────────────────────────────────────────
+        let total = 0, success = 0, errors = 0;
+        let currentReportFilename = null;
 
-        let total = 0;
-        let success = 0;
-        let errors = 0;
+        const reportBanner      = document.getElementById('reportDownloadBanner');
+        const btnDownloadReport = document.getElementById('btnDownloadReport');
+
+        const showReportDownload = (filename) => {
+            currentReportFilename = filename;
+            btnDownloadReport.href = `/download-report/${encodeURIComponent(filename)}`;
+            reportBanner.classList.add('visible');
+        };
+
+        const hideReportDownload = () => {
+            currentReportFilename = null;
+            reportBanner.classList.remove('visible');
+        };
 
         const resetStats = () => {
-            total = 0;
-            success = 0;
-            errors = 0;
+            total = 0; success = 0; errors = 0;
             updateStatsUI();
             statDashboard.style.display = 'flex';
         };
 
         const updateStatsUI = () => {
-            totalItemsEl.textContent = total;
+            totalItemsEl.textContent  = total;
             successCountEl.textContent = success;
-            errorCountEl.textContent = errors;
+            errorCountEl.textContent  = errors;
         };
 
+        // ── Erros de validação ────────────────────────────────────────────
         const showValidationErrors = (errorList) => {
             const listEl = document.getElementById('validationErrorList');
             listEl.innerHTML = '';
@@ -835,188 +695,316 @@
                 ul.appendChild(li);
             });
             listEl.appendChild(ul);
-            const modal = new bootstrap.Modal(document.getElementById('validationErrorModal'));
-            modal.show();
+            new bootstrap.Modal(document.getElementById('validationErrorModal')).show();
         };
 
-
+        // ── Submit principal ──────────────────────────────────────────────
         const handleSubmit = async (event) => {
             event.preventDefault();
             const fileInput = document.getElementById('excelFile');
-            const sheetSelect = document.getElementById('sheetName');
-            if (!fileInput.files[0]) {
-                alert("Por favor, selecione um arquivo.");
-                return;
-            }
+            if (!fileInput.files[0]) { alert('Por favor, selecione um arquivo.'); return; }
 
-            // UI Loading State
+            hideReportDownload();
             resetStats();
+            resetProgress();
+            resetSheetProgress();
             btnSubmit.disabled = true;
             spinner.style.display = 'inline-block';
             btnText.textContent = 'Validando dados...';
-            logArea.textContent = 'FASE 1: Validando dados antes do upload...\n';
+            logArea.textContent = '';
+            if (btnDownloadLog) btnDownloadLog.disabled = true;
 
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
-            formData.append('sheet', sheetSelect.value);
 
             let validationResult = null;
 
-            // ============================
-            // FASE 1: VALIDAÇÃO (separada)
-            // ============================
+            // ── FASE 1: VALIDAÇÃO ─────────────────────────────────────────
+            setProgress(5, 'Fase 1 — Validando dados...', 'Enviando arquivo...');
+            appendLog('FASE 1: Validando dados antes do upload...\n');
+
             try {
-                logArea.textContent += 'Conectando ao SharePoint e verificando dados...\n';
+                setProgress(10, 'Fase 1 — Validando dados...', 'Conectando ao SharePoint...');
+                appendLog('Conectando ao SharePoint e verificando dados...\n');
 
-                // Envia a requisição e processa a resposta em tempo real
-                const validateResponse = await fetch('/validate', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                // Se a resposta for JSON direto (erro rápido)
+                const validateResponse = await fetch('/validate', { method: 'POST', body: formData });
                 const contentType = validateResponse.headers.get('content-type') || '';
+
                 if (contentType.includes('application/json')) {
                     validationResult = await validateResponse.json();
                     if (validationResult.log) {
                         const logLines = validationResult.log.split('\n')
-                            .filter(l => !l.includes('---VALIDATION_JSON'))
-                            .join('\n');
-                        logArea.textContent += logLines + '\n';
-                        logArea.scrollTop = logArea.scrollHeight;
+                            .filter(l => !l.includes('---VALIDATION_JSON')).join('\n');
+                        appendLog(logLines + '\n');
                     }
                 } else {
-                    // Se for streaming, processa linha a linha
-                    const reader = validateResponse.body.getReader();
+                    const reader  = validateResponse.body.getReader();
                     const decoder = new TextDecoder('utf-8');
-                    let fullText = '';
+                    let fullText  = '';
                     let done, value;
+                    setProgress(18, 'Fase 1 — Validando dados...', 'Analisando dados...');
                     while (true) {
                         ({ done, value } = await reader.read());
                         if (done) break;
                         const chunk = decoder.decode(value);
                         fullText += chunk;
-                        logArea.textContent += chunk;
-                        logArea.scrollTop = logArea.scrollHeight;
+                        appendLog(chunk);
                     }
-                    // Tenta extrair JSON do final do texto
                     try {
                         const start = fullText.indexOf('---VALIDATION_JSON_START---');
-                        const end = fullText.indexOf('---VALIDATION_JSON_END---');
+                        const end   = fullText.indexOf('---VALIDATION_JSON_END---');
                         if (start !== -1 && end !== -1) {
-                            const jsonStr = fullText.substring(start + 27, end).trim();
-                            validationResult = JSON.parse(jsonStr);
+                            validationResult = JSON.parse(fullText.substring(start + 27, end).trim());
                         }
-                    } catch {}
+                    } catch { /* ignore */ }
                 }
 
                 if (!validationResult) {
-                    logArea.textContent += '\n[ERRO] Não foi possível obter o resultado da validação.\n';
-                    btnSubmit.disabled = false;
-                    spinner.style.display = 'none';
+                    setProgress(0, 'Erro na validação', 'Não foi possível obter resultado.');
+                    appendLog('\n[ERRO] Não foi possível obter o resultado da validação.\n');
+                    btnSubmit.disabled = false; spinner.style.display = 'none';
                     btnText.textContent = 'Iniciar Importação';
-                    return;
+                    enableLogDownload(); return;
                 }
 
                 if (validationResult.status !== 'success') {
-                    // VALIDAÇÃO FALHOU — mostrar popup e BLOQUEAR upload
-                    const errorList = validationResult.errors || ['Erro desconhecido na validação.'];
-                    logArea.textContent += '\n❌ VALIDAÇÃO FALHOU — Upload BLOQUEADO.\n';
-                    logArea.textContent += `${errorList.length} erro(s) encontrado(s).\n`;
-                    showValidationErrors(errorList);
-                    btnSubmit.disabled = false;
-                    spinner.style.display = 'none';
+                    setProgress(0, 'Validação reprovada', `${(validationResult.errors || []).length} erro(s) encontrado(s).`);
+                    appendLog('\n❌ VALIDAÇÃO FALHOU — Upload BLOQUEADO.\n');
+                    showValidationErrors(validationResult.errors || ['Erro desconhecido na validação.']);
+                    btnSubmit.disabled = false; spinner.style.display = 'none';
                     btnText.textContent = 'Iniciar Importação';
-                    return; // IMPEDE o upload
+                    enableLogDownload(); return;
                 }
 
                 const totalLines = Number(validationResult.total_lines || 0);
                 if (totalLines <= 0) {
-                    const errorList = ['Nenhuma linha válida encontrada para importar no SharePoint.'];
-                    logArea.textContent += '\n❌ VALIDAÇÃO FALHOU — Upload BLOQUEADO.\n';
-                    logArea.textContent += 'Nenhuma linha válida para importação.\n';
-                    showValidationErrors(errorList);
-                    btnSubmit.disabled = false;
-                    spinner.style.display = 'none';
+                    setProgress(0, 'Validação reprovada', 'Nenhuma linha válida encontrada.');
+                    showValidationErrors(['Nenhuma linha válida encontrada para importar no SharePoint.']);
+                    btnSubmit.disabled = false; spinner.style.display = 'none';
                     btnText.textContent = 'Iniciar Importação';
-                    return; // IMPEDE o upload
+                    enableLogDownload(); return;
                 }
 
-                // VALIDAÇÃO OK — prosseguir para upload
-                logArea.textContent += '\n✅ Validação concluída com sucesso!\n';
-                logArea.textContent += `${totalLines} linha(s) validada(s).\n`;
-                logArea.textContent += '\n' + '='.repeat(40) + '\n';
-                logArea.textContent += 'FASE 2: Enviando dados ao SharePoint...\n';
-                logArea.textContent += '='.repeat(40) + '\n\n';
-                logArea.scrollTop = logArea.scrollHeight;
+                setProgress(30, 'Fase 1 concluída ✓', `${totalLines} linha(s) validada(s).`);
+                appendLog(`\n✅ Validação concluída. ${totalLines} linha(s) válida(s).\n`);
 
             } catch (error) {
-                logArea.textContent += `\n[ERRO CRÍTICO NA VALIDAÇÃO]: ${error.message}\n`;
-                btnSubmit.disabled = false;
-                spinner.style.display = 'none';
+                setProgress(0, 'Erro crítico na validação', error.message);
+                appendLog(`\n[ERRO CRÍTICO NA VALIDAÇÃO]: ${error.message}\n`);
+                btnSubmit.disabled = false; spinner.style.display = 'none';
                 btnText.textContent = 'Iniciar Importação';
-                return; // IMPEDE o upload
+                enableLogDownload(); return;
             }
 
-            // ============================
-            // FASE 2: UPLOAD (só chega aqui se validação passou)
-            // ============================
-            btnText.textContent = 'Enviando ao SharePoint...';
+            // ── FASE 2: UPLOAD ────────────────────────────────────────────
+            const fallbackTotalItems = Number(validationResult.total_lines || 1);
+            let itemsDone = 0;
+
+            const getExpectedTotal = () => {
+                const totalExpected = sheetProgress.PESSOAS.expected + sheetProgress.EQUIPAMENTOS.expected;
+                return totalExpected > 0 ? totalExpected : fallbackTotalItems;
+            };
+
+            const updateOverallItemProgress = () => {
+                const expectedTotal = getExpectedTotal();
+                const pct = 44 + (itemsDone * 45 / expectedTotal);
+                setProgress(
+                    pct,
+                    'Fase 2 — Enviando itens...',
+                    `${itemsDone} de ${expectedTotal} item(ns) processado(s)`
+                );
+            };
+
+            btnText.textContent = 'Validando e preparando dados...';
+            setProgress(35, 'Fase 2 — Validando e preparando dados...', 'Preparando envio...');
+            appendLog('\n' + '='.repeat(40) + '\nFASE 2: Enviando dados ao SharePoint...\n' + '='.repeat(40) + '\n\n');
 
             try {
                 const response = await fetch('/run-script', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        filename: validationResult.filename,
-                        sheet: sheetSelect.value
-                    })
+                    body: JSON.stringify({ filename: validationResult.filename })
                 });
 
-                const reader = response.body.getReader();
+                const reader  = response.body.getReader();
                 const decoder = new TextDecoder();
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    
+
                     const chunk = decoder.decode(value);
-                    
-                    // Detectar resultados nas linhas
-                    if (chunk.includes("--- RESULT: SUCCESS ---")) {
-                        total++;
-                        success++;
-                        updateStatsUI();
+
+                    const peopleCountMatch = chunk.match(/PESSOAS:\s*(\d+)\s*item\(ns\)\s*carregado\(s\)/i);
+                    if (peopleCountMatch) {
+                        sheetProgress.PESSOAS.expected = Number(peopleCountMatch[1] || 0);
+                        refreshSheetProgressUI();
                     }
-                    if (chunk.includes("--- RESULT: ERROR ---")) {
-                        total++;
-                        errors++;
-                        updateStatsUI();
+                    const equipCountMatch = chunk.match(/EQUIPAMENTOS:\s*(\d+)\s*item\(ns\)\s*carregado\(s\)/i);
+                    if (equipCountMatch) {
+                        sheetProgress.EQUIPAMENTOS.expected = Number(equipCountMatch[1] || 0);
+                        refreshSheetProgressUI();
                     }
 
-                    // Limpar logs técnicos para o usuário
-                    let cleanChunk = chunk
-                        .replace(/--- RESULT: SUCCESS ---/g, "✅ Linha processada com sucesso.")
-                        .replace(/--- RESULT: ERROR ---/g, "❌ Erro ao processar linha.")
-                        .replace(/=== FINAL SUMMARY ===/g, "\n RESUMO FINAL:");
+                    // ── Detectar marcos de progresso no stream ──
+                    if (chunk.includes('Gerando ID de Mobilização') || chunk.includes('Gerando ID de Mobilizacao')) {
+                        setProgress(40, 'Fase 2 — Gerando ID de Mobilização...', '');
+                    }
+                    if (chunk.includes('ID_Mobilizacao gerado:')) {
+                        const m = chunk.match(/ID_Mobilizacao gerado:\s*(\S+)/);
+                        setProgress(44, 'Fase 2 — ID gerado', m ? `ID: ${m[1]}` : '');
+                    }
+                    if (chunk.includes('Adicionando item [')) {
+                        if (!sheetProgress.uploadStarted) {
+                            sheetProgress.uploadStarted = true;
+                            sheetProgressSection.style.display = 'block';
+                            btnText.textContent = 'Enviando ao SharePoint...';
+                        }
+                        const m = chunk.match(/Adicionando item\s*\[[^\]]+\]:\s*(.+)/);
+                        const itemName = m ? m[1].trim() : '';
+                        setProgress(_progressValue, 'Fase 2 — Enviando itens...', itemName ? `Enviando: ${itemName}` : '');
+                    }
+                    const resultMatches = Array.from(chunk.matchAll(/---\s*RESULT:\s*(SUCCESS|ERROR)(?::([A-Z_]+))?\s*---/g));
+                    if (resultMatches.length > 0) {
+                        for (const match of resultMatches) {
+                            const resultType = (match[1] || '').toUpperCase();
+                            const origem = (match[2] || '').toUpperCase();
 
-                    logArea.textContent += cleanChunk;
-                    logArea.scrollTop = logArea.scrollHeight;
+                            total++;
+                            itemsDone++;
+                            if (resultType === 'SUCCESS') {
+                                success++;
+                            } else {
+                                errors++;
+                            }
+
+                            if (origem === 'PESSOAS') {
+                                sheetProgress.PESSOAS.done++;
+                            } else if (origem === 'EQUIPAMENTOS') {
+                                sheetProgress.EQUIPAMENTOS.done++;
+                            }
+                        }
+
+                        updateStatsUI();
+                        refreshSheetProgressUI();
+                        updateOverallItemProgress();
+                    }
+                    if (chunk.includes('Validando unicidade')) {
+                        setProgress(90, 'Fase 2 — Validando unicidade do ID...', '');
+                    }
+                    if (chunk.includes('Unicidade confirmada') || chunk.includes('Correção concluída')) {
+                        setProgress(93, 'Fase 2 — Unicidade confirmada', '');
+                    }
+                    if (chunk.includes('[SUCESSO]') || chunk.includes('Processo finalizado com código 0')) {
+                        setProgress(97, 'Finalizando...', 'Gerando relatório...');
+                    }
+
+                    // Relatório gerado
+                    const reportMatch = chunk.match(/---REPORT_FILE:([^-]+)---/);
+                    if (reportMatch) {
+                        showReportDownload(reportMatch[1].trim());
+                        setProgress(100, 'Concluído ✓', 'Importação finalizada com sucesso.');
+                    }
+
+                    // Log limpo
+                    const cleanChunk = chunk
+                        .replace(/---\s*RESULT:\s*SUCCESS(?::[A-Z_]+)?\s*---/g, '✅ Linha processada com sucesso.')
+                        .replace(/---\s*RESULT:\s*ERROR(?::[A-Z_]+)?\s*---/g, '❌ Erro ao processar linha.')
+                        .replace(/=== FINAL SUMMARY ===/g, '\n RESUMO FINAL:')
+                        .replace(/ID de Mobilizacao desta submissao:/g, '🔖 ID de Mobilização:')
+                        .replace(/---REPORT_FILE:[^-]+---\n?/g, '');
+                    appendLog(cleanChunk);
+                }
+
+                // Se não chegou a 100 via marcador, finaliza
+                if (_progressValue < 100) {
+                    if (errors === 0) {
+                        setProgress(100, 'Concluído ✓', `${success} item(ns) importado(s) com sucesso.`);
+                    } else {
+                        setProgress(100, `Concluído com erros`, `${success} sucesso(s), ${errors} falha(s).`);
+                        progressBar.style.backgroundColor = errors === total
+                            ? 'var(--vestas-earth-red)' : 'var(--vestas-earth-orange)';
+                        progressBar.classList.remove('progress-bar-animated');
+                    }
                 }
 
             } catch (error) {
-                logArea.textContent += `\n[ERRO CRÍTICO NO UPLOAD]: ${error.message}`;
+                setProgress(0, 'Erro crítico no upload', error.message);
+                appendLog(`\n[ERRO CRÍTICO NO UPLOAD]: ${error.message}`);
             } finally {
                 btnSubmit.disabled = false;
                 spinner.style.display = 'none';
                 btnText.textContent = 'Iniciar Importação';
+                enableLogDownload();
             }
         };
 
+        // ── Relatórios anteriores ─────────────────────────────────────────
+        const reportsModal     = document.getElementById('reportsModal');
+        const reportsModalBody = document.getElementById('reportsModalBody');
+
+        const formatBytes = (bytes) => {
+            if (bytes < 1024) return `${bytes} B`;
+            if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+            return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+        };
+
+        const loadReports = async () => {
+            reportsModalBody.innerHTML = '<p class="text-muted">Carregando...</p>';
+            try {
+                const res = await fetch('/list-reports');
+                const data = await res.json();
+                const reports = data.reports || [];
+                if (reports.length === 0) {
+                    reportsModalBody.innerHTML = '<p class="text-muted">Nenhum relatório de mobilização encontrado.</p>';
+                    return;
+                }
+                const table = document.createElement('table');
+                table.className = 'table table-hover table-sm align-middle';
+                table.innerHTML = `
+                    <thead style="background-color:var(--vestas-night-sky);color:#fff;">
+                        <tr>
+                            <th>Arquivo</th>
+                            <th class="text-center">Gerado em</th>
+                            <th class="text-center">Tamanho</th>
+                            <th class="text-center">Download</th>
+                        </tr>
+                    </thead><tbody></tbody>`;
+                const tbody = table.querySelector('tbody');
+                reports.forEach(r => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td style="font-size:0.82rem;word-break:break-all;">${r.name}</td>
+                        <td class="text-center" style="white-space:nowrap;font-size:0.82rem;">${r.modified}</td>
+                        <td class="text-center" style="font-size:0.82rem;">${formatBytes(r.size)}</td>
+                        <td class="text-center">
+                            <a href="/download-report/${encodeURIComponent(r.name)}" download
+                               class="btn btn-vestas-download btn-sm" style="padding:4px 10px;font-size:0.8rem;">
+                                📥
+                            </a>
+                        </td>`;
+                    tbody.appendChild(tr);
+                });
+                reportsModalBody.innerHTML = '';
+                reportsModalBody.appendChild(table);
+            } catch (err) {
+                reportsModalBody.innerHTML = `<p class="text-danger">Erro ao carregar relatórios: ${err.message}</p>`;
+            }
+        };
+
+        reportsModal?.addEventListener('show.bs.modal', loadReports);
+
+        // ── Eventos ───────────────────────────────────────────────────────
         btnSubmit.addEventListener('click', handleSubmit);
         form?.addEventListener('submit', handleSubmit);
         btnUpdateTemplate?.addEventListener('click', updateTemplate);
         loadTemplateUpdateStatus();
+
+        document.getElementById('btnShutdown')?.addEventListener('click', async () => {
+            if (!confirm('Deseja realmente encerrar o servidor?')) return;
+            try { await fetch('/shutdown', { method: 'POST' }); } catch { /* expected */ }
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:1.2rem;color:#1F3144;">Servidor encerrado. Você pode fechar esta aba.</div>';
+        });
     });
 </script>
 

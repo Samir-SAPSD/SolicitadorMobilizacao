@@ -1,9 +1,6 @@
-param(
+﻿param(
     [Parameter(Mandatory=$false)]
-    [string]$ExcelPath = ".\DadosParaImportar.xlsx",
-    
-    [Parameter(Mandatory=$false)]
-    [string]$SheetName = "PESSOAS"
+    [string]$ExcelPath = ".\DadosParaImportar.xlsx"
 )
 
 [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -355,6 +352,164 @@ function Test-SharePointFieldValueCompatibility {
     return $errors
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Funções auxiliares: ID de Mobilização e leitura segura de abas Excel
+# ──────────────────────────────────────────────────────────────────────────────
+
+function Get-MaxMobilizacaoId {
+    # Retorna o valor numérico (long) do maior ID_Mobilizacao existente na lista.
+    # Busca apenas o campo ID_Mobilizacao e calcula o máximo em PowerShell.
+    param([string]$ListId)
+    try {
+        $items = Get-PnPListItem -List $ListId -Fields "ID_Mobilizacao" -PageSize 5000 -ErrorAction Stop
+        $maxVal = [long]0
+        foreach ($item in $items) {
+            $idStr = $item.FieldValues["ID_Mobilizacao"]
+            if (-not [string]::IsNullOrWhiteSpace($idStr)) {
+                try {
+                    $val = [Convert]::ToInt64($idStr.Trim(), 16)
+                    if ($val -gt $maxVal) { $maxVal = $val }
+                } catch { }
+            }
+        }
+        return $maxVal
+    }
+    catch {
+        Write-Warning "Não foi possível ler ID_Mobilizacao máximo: $_"
+        return [long]0
+    }
+}
+
+function Format-MobilizacaoId {
+    param([long]$Value)
+    $hex = $Value.ToString("X")
+    if ($hex.Length -lt 4) { $hex = $hex.PadLeft(4, '0') }
+    return $hex
+}
+
+function Get-ColumnMappingKey {
+    param([string]$ColumnName)
+
+    if ([string]::IsNullOrWhiteSpace($ColumnName)) {
+        return [PSCustomObject]@{ DisplayKey = ""; InternalKey = "" }
+    }
+
+    $col = "$ColumnName".Trim()
+    if ($col -match '_x005F_') {
+        $col = $col -replace '_x005F_', '_'
+    }
+
+    # Permite cabeçalho no formato: "Display Name [InternalName]"
+    if ($col -match '^(?<disp>.+?)\s*\[(?<internal>[^\[\]]+)\]\s*$') {
+        $disp = "$($matches['disp'])".Trim().ToLowerInvariant()
+        $internal = "$($matches['internal'])".Trim().ToLowerInvariant()
+        return [PSCustomObject]@{ DisplayKey = $disp; InternalKey = $internal }
+    }
+
+    $key = $col.ToLowerInvariant()
+    return [PSCustomObject]@{ DisplayKey = $key; InternalKey = $key }
+}
+
+function Read-ExcelSheetSafe {
+    param(
+        [string]$ExcelFilePath,
+        [string]$SheetName
+    )
+
+    # 1. TENTATIVA PRIORITÁRIA: OPENXML
+    try {
+        $items = @(Read-ExcelOpenXml -Path (Resolve-Path $ExcelFilePath).Path -WorksheetName $SheetName -IncludeEmptyColumns $false)
+        Write-Host "  Aba '$SheetName': OpenXML OK — $($items.Count) item(ns)." -ForegroundColor Green
+        return $items
+    }
+    catch {
+        $msg = $_.Exception.Message
+        if ($msg -match "não encontrada|Planilha vazia") {
+            Write-Host "  Aba '$SheetName': não encontrada ou vazia (OpenXML)." -ForegroundColor Yellow
+            return @()
+        }
+        Write-Warning "  Aba '$SheetName': falha OpenXML ($msg)."
+    }
+
+    # 2. TENTATIVA SECUNDÁRIA: VIA COM (EXCEL INSTALADO)
+    $comExcel = $null; $comWorkbook = $null; $comWorksheet = $null; $comUsedRange = $null
+    try {
+        Write-Host "  Aba '$SheetName': tentando via COM..." -ForegroundColor Gray
+        $comExcel = New-Object -ComObject Excel.Application -ErrorAction Stop
+        $comExcel.Visible = $false
+        $comExcel.DisplayAlerts = $false
+        $comWorkbook = $comExcel.Workbooks.Open((Resolve-Path $ExcelFilePath).Path)
+        try { $comWorksheet = $comWorkbook.Worksheets.Item($SheetName) } catch { }
+        if (-not $comWorksheet) {
+            Write-Host "  Aba '$SheetName': não encontrada (COM)." -ForegroundColor Yellow
+            return @()
+        }
+        $comUsedRange = $comWorksheet.UsedRange
+        $rowCount = $comUsedRange.Rows.Count
+        $colCount = $comUsedRange.Columns.Count
+        if ($rowCount -lt 2) {
+            Write-Host "  Aba '$SheetName': sem dados (COM)." -ForegroundColor Yellow
+            return @()
+        }
+        $valueArray = $comUsedRange.Value2
+        $headers = @(); for ($c = 1; $c -le $colCount; $c++) { $headers += $valueArray[1, $c] }
+        $comItems = @()
+        for ($r = 2; $r -le $rowCount; $r++) {
+            $obj = New-Object PSCustomObject
+            $hasData = $false
+            for ($c = 1; $c -le $colCount; $c++) {
+                $val = $valueArray[$r, $c]
+                if (-not [string]::IsNullOrWhiteSpace("$val")) {
+                    $header = $headers[$c - 1]
+                    if (-not [string]::IsNullOrWhiteSpace("$header")) {
+                        $obj | Add-Member -MemberType NoteProperty -Name $header -Value "$val" -Force
+                        $hasData = $true
+                    }
+                }
+            }
+            if ($hasData) { $comItems += $obj }
+        }
+        Write-Host "  Aba '$SheetName': COM OK — $($comItems.Count) item(ns)." -ForegroundColor Green
+        return $comItems
+    }
+    catch {
+        Write-Warning "  Aba '$SheetName': falha COM ($($_.Exception.Message))."
+    }
+    finally {
+        try { if ($comUsedRange)  { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($comUsedRange) } }  catch {}
+        try { if ($comWorksheet) { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($comWorksheet) } } catch {}
+        try { if ($comWorkbook)  { $comWorkbook.Close($false); [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($comWorkbook) } } catch {}
+        try { if ($comExcel)     { $comExcel.Quit(); [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($comExcel) } }     catch {}
+        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    }
+
+    # 3. TENTATIVA TERCIÁRIA: IMPORT-EXCEL
+    try {
+        Write-Warning "  Aba '$SheetName': tentando via Import-Excel..."
+        if (-not (Get-Module -ListAvailable -Name Import-Excel)) {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            try {
+                Install-Module -Name Import-Excel -Repository PSGallery -Scope CurrentUser -Force -ErrorAction Stop
+            }
+            catch {
+                if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+                    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -ErrorAction SilentlyContinue
+                }
+                Install-Package -Name Import-Excel -Source "https://www.powershellgallery.com/api/v2" -Scope CurrentUser -Force -ErrorAction Stop
+            }
+        }
+        if (-not (Get-Module -Name Import-Excel)) { Import-Module Import-Excel -ErrorAction SilentlyContinue }
+        $ieItems = @(Import-Excel -Path $ExcelFilePath -WorksheetName $SheetName -ErrorAction Stop)
+        Write-Host "  Aba '$SheetName': Import-Excel OK — $($ieItems.Count) item(ns)." -ForegroundColor Green
+        return $ieItems
+    }
+    catch {
+        Write-Warning "  Aba '$SheetName': falha Import-Excel ($($_.Exception.Message))."
+    }
+
+    return @()
+}
+
 # Configurações
 $TestMode = $false # Altere para $false para usar a lista de produção
 $SiteUrl = "https://vestas.sharepoint.com/sites/CC-ControleService-BR"
@@ -500,133 +655,40 @@ catch {
 }
 
 # Configurações do Arquivo Excel
-$ExcelFilePath = $ExcelPath # Caminho recebido via parâmetro
+$ExcelFilePath = $ExcelPath
 
-# Se o parâmetro SheetName vier vazio, define padrão
-if ([string]::IsNullOrWhiteSpace($SheetName)) { $SheetName = "PESSOAS" }
-
-# Ler dados do Excel
-if (Test-Path $ExcelFilePath) {
-    Write-Host "Lendo arquivo Excel: $ExcelFilePath (Aba: $SheetName)" -ForegroundColor Cyan
-    $ItensParaAdicionar = @()
-    $readSuccess = $false
-
-    # 1. TENTATIVA PRIORITÁRIA: LEITURA OPENXML (rápido e sem dependências externas)
-    try {
-        $ItensParaAdicionar = @(Read-ExcelOpenXml -Path (Resolve-Path $ExcelFilePath).Path -WorksheetName $SheetName -IncludeEmptyColumns $false)
-        if ($ItensParaAdicionar -and $ItensParaAdicionar.Count -gt 0) {
-            Write-Host "Leitura via OpenXML bem sucedida! Itens: $($ItensParaAdicionar.Count)" -ForegroundColor Green
-            $readSuccess = $true
-        }
-    } catch {
-        Write-Warning "Falha na leitura OpenXML ($($_.Exception.Message))."
-    }
-
-    # 2. TENTATIVA SECUNDÁRIA: VIA COM (EXCEL INSTALADO)
-    if (-not $readSuccess) {
-        try {
-            Write-Host "Tentando leitura via Excel COM..." -ForegroundColor Gray
-            $excel = New-Object -ComObject Excel.Application -ErrorAction Stop
-            $excel.Visible = $false
-            $excel.DisplayAlerts = $false
-            
-            $workbook = $excel.Workbooks.Open((Resolve-Path $ExcelFilePath).Path)
-            
-            try {
-                $worksheet = $workbook.Worksheets.Item($SheetName)
-            } catch {
-                $allSheets = foreach($s in $workbook.Worksheets) { $s.Name }
-                throw "Aba '$SheetName' não encontrada. Abas disponíveis: $($allSheets -join ', ')"
-            }
-
-            $usedRange = $worksheet.UsedRange
-            $rowCount = $usedRange.Rows.Count
-            $colCount = $usedRange.Columns.Count
-            
-            if ($rowCount -lt 2) { throw "Planilha vazia ou apenas cabeçalho." }
-
-            $valueArray = $usedRange.Value2
-            $headers = @()
-            for ($c = 1; $c -le $colCount; $c++) {
-                $headers += $valueArray[1, $c]
-            }
-
-            $ItensParaAdicionar = @()
-            for ($r = 2; $r -le $rowCount; $r++) {
-                $obj = New-Object PSCustomObject
-                $hasData = $false
-                for ($c = 1; $c -le $colCount; $c++) {
-                    $val = $valueArray[$r, $c]
-                    if (-not [string]::IsNullOrWhiteSpace("$val")) {
-                        $val = "$val"
-                        $header = $headers[$c-1]
-                        if (-not [string]::IsNullOrWhiteSpace("$header")) {
-                            $obj | Add-Member -MemberType NoteProperty -Name $header -Value $val -Force
-                            $hasData = $true
-                        }
-                    }
-                }
-                if ($hasData) { $ItensParaAdicionar += $obj }
-            }
-            
-            Write-Host "Leitura via COM bem sucedida! Itens: $($ItensParaAdicionar.Count)" -ForegroundColor Green
-            $readSuccess = $true
-        }
-        catch {
-            Write-Warning "Falha na leitura via COM ($($_.Exception.Message))."
-        }
-        finally {
-            try { if ($usedRange) { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($usedRange) } } catch {}
-            try { if ($worksheet) { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($worksheet) } } catch {}
-            try { if ($workbook) { $workbook.Close($false); [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbook) } } catch {}
-            try { if ($excel) { $excel.Quit(); [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) } } catch {}
-            [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-        }
-    }
-
-    # 3. TENTATIVA TERCIÁRIA: INSTALAR/USAR IMPORT-EXCEL
-    if (-not $readSuccess) {
-        Write-Warning "Tentando fallback para módulo Import-Excel..."
-
-        # Verifica/Instala Import-Excel apenas se necessário
-        if (-not (Get-Module -ListAvailable -Name Import-Excel)) {
-            Write-Warning "O módulo Import-Excel não foi encontrado. Tentando instalar..."
-            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-            
-            try {
-                Install-Module -Name Import-Excel -Repository PSGallery -Scope CurrentUser -Force -ErrorAction Stop
-                Import-Module Import-Excel -ErrorAction Stop
-            }
-            catch {
-                try {
-                    if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
-                        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -ErrorAction SilentlyContinue
-                    }
-                    Install-Package -Name Import-Excel -Source "https://www.powershellgallery.com/api/v2" -Scope CurrentUser -Force -ErrorAction Stop
-                } catch {
-                     Write-Error "FALHA CRÍTICA: Não foi possível instalar Import-Excel e a leitura via COM falhou."
-                     exit 1
-                }
-            }
-        }
-        
-        if (-not (Get-Module -Name Import-Excel)) { Import-Module Import-Excel -ErrorAction SilentlyContinue }
-
-        try {
-            $ItensParaAdicionar = @(Import-Excel -Path $ExcelFilePath -WorksheetName $SheetName -ErrorAction Stop)
-            if (-not $ItensParaAdicionar) { Write-Warning "Nenhum dado encontrado na aba '$SheetName'." }
-            else { Write-Host "Leitura via Import-Excel bem sucedida!" -ForegroundColor Green }
-        } catch {
-            Write-Error "ERRO AO LER EXCEL: $_"
-            exit 1
-        }
-    }
-}
-else {
+# Ler dados do Excel — abas PESSOAS e EQUIPAMENTOS (submissão unificada)
+if (-not (Test-Path $ExcelFilePath)) {
     Write-Error "Arquivo Excel não encontrado: $ExcelFilePath"
-    Write-Host "Por favor, crie um arquivo Excel com as colunas correspondentes ao SharePoint (ex: Title)."
     exit 1
 }
+
+Write-Host "Lendo arquivo Excel: $ExcelFilePath" -ForegroundColor Cyan
+$ItensPessoas      = @(Read-ExcelSheetSafe -ExcelFilePath $ExcelFilePath -SheetName "PESSOAS")
+$ItensEquipamentos = @(Read-ExcelSheetSafe -ExcelFilePath $ExcelFilePath -SheetName "EQUIPAMENTOS")
+
+foreach ($it in $ItensPessoas) {
+    try { $it | Add-Member -MemberType NoteProperty -Name "OrigemAba" -Value "PESSOAS" -Force } catch {}
+}
+foreach ($it in $ItensEquipamentos) {
+    try { $it | Add-Member -MemberType NoteProperty -Name "OrigemAba" -Value "EQUIPAMENTOS" -Force } catch {}
+}
+
+$ItensParaAdicionar = @()
+if ($ItensPessoas.Count -gt 0) {
+    Write-Host "  PESSOAS: $($ItensPessoas.Count) item(ns) carregado(s)." -ForegroundColor Cyan
+    $ItensParaAdicionar += $ItensPessoas
+}
+if ($ItensEquipamentos.Count -gt 0) {
+    Write-Host "  EQUIPAMENTOS: $($ItensEquipamentos.Count) item(ns) carregado(s)." -ForegroundColor Cyan
+    $ItensParaAdicionar += $ItensEquipamentos
+}
+
+if ($ItensParaAdicionar.Count -eq 0) {
+    Write-Error "Nenhum dado encontrado nas abas PESSOAS ou EQUIPAMENTOS."
+    exit 1
+}
+Write-Host "Total de itens a processar: $($ItensParaAdicionar.Count)" -ForegroundColor Cyan
 
 # === APLICAR REGRAS DE PREENCHIMENTO AUTOMÁTICO DO ANALISTA RESPONSÁVEL ===
 Write-Host ""
@@ -659,24 +721,25 @@ for ($rowIndex = 0; $rowIndex -lt $ItensParaAdicionar.Count; $rowIndex++) {
     try {
         # Converte a linha do Excel (PSCustomObject) para Hashtable
         $ItemValues = @{}
+        $DisplayValues = @{} # Valores legíveis para exibição no relatório (lookup: nome em vez de ID)
         $Row.PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' } | ForEach-Object {
             $val = $_.Value
             $colName = $_.Name.Trim() # Remove espaços extras do nome da coluna
-            
-            # CORREÇÃO DE NOME DE COLUNA (Remover escape extra do Excel)
-            # O Excel/Import-Excel às vezes escapa o underscore como _x005F_
-            if ($colName -match '_x005F_') {
-                $colName = $colName -replace '_x005F_', '_'
-            }
+
+            $colMap = Get-ColumnMappingKey -ColumnName $colName
+            $colNameNormalized = if ($colMap.DisplayKey) { $colMap.DisplayKey } else { "$colName".ToLowerInvariant() }
+            $internalHint = $colMap.InternalKey
 
             # Verifica se não é nulo e se, convertido para string, não é vazio ou apenas espaços
             if ($null -ne $val -and "$val".Trim().Length -gt 0) {
                 
                 # 1. Identificar o campo SharePoint correto (por Title ou InternalName)
                 $fieldInfo = $null
-                $colNameKey = $colName.ToLowerInvariant()
-                if ($FieldMap.ContainsKey($colNameKey)) {
-                    $fieldInfo = $FieldMap[$colNameKey]
+                if (-not [string]::IsNullOrWhiteSpace($internalHint) -and $FieldMap.ContainsKey($internalHint)) {
+                    $fieldInfo = $FieldMap[$internalHint]
+                }
+                elseif ($FieldMap.ContainsKey($colNameNormalized)) {
+                    $fieldInfo = $FieldMap[$colNameNormalized]
                 }
                 if ($fieldInfo) {
                     $realColName = $fieldInfo.InternalName
@@ -689,11 +752,25 @@ for ($rowIndex = 0; $rowIndex -lt $ItensParaAdicionar.Count; $rowIndex++) {
                     if ($fieldInfo.TypeAsString -match "Lookup") {
                         if ($val -match '^\d+$') {
                             $ItemValues[$realColName] = $val
+                            # Tenta resolver nome a partir do ID para exibição no relatório
+                            $targetListId2 = $fieldInfo.LookupList
+                            $targetField2  = if ($fieldInfo.LookupField) { $fieldInfo.LookupField } else { "Title" }
+                            if ($realColName -match "Parque" -or $colName -match "Parque") {
+                                $targetListId2 = $ParqueLookupListId
+                                $targetField2  = "Title"
+                            }
+                            $datasetKey2 = "$targetListId2|$targetField2"
+                            if ($LookupDatasetCache.ContainsKey($datasetKey2)) {
+                                $matchItem = $LookupDatasetCache[$datasetKey2] | Where-Object { $_.Id -eq [int]$val } | Select-Object -First 1
+                                if ($matchItem) { $DisplayValues[$realColName] = "$($matchItem.FieldValues[$targetField2])" }
+                            }
+                            if (-not $DisplayValues.ContainsKey($realColName)) { $DisplayValues[$realColName] = "$val" }
                         }
                         else {
                             $cacheKey = "${realColName}:${val}"
                             if ($LookupCache.ContainsKey($cacheKey)) {
                                 $ItemValues[$realColName] = $LookupCache[$cacheKey]
+                                $DisplayValues[$realColName] = "$val"
                             }
                             else {
                                 # Write-Host "Resolvendo Lookup '$colName' ($realColName) para valor '$val'..." -NoNewline -ForegroundColor Gray
@@ -744,6 +821,7 @@ for ($rowIndex = 0; $rowIndex -lt $ItensParaAdicionar.Count; $rowIndex++) {
                                     if ($foundId) {
                                         $LookupCache[$cacheKey] = $foundId
                                         $ItemValues[$realColName] = $foundId
+                                        $DisplayValues[$realColName] = $searchVal
                                         # Write-Host " [OK ID: $foundId]" -ForegroundColor Green
                                     } else {
                                         Write-Host " [Parque não encontrado]" -ForegroundColor Red
@@ -852,9 +930,14 @@ for ($rowIndex = 0; $rowIndex -lt $ItensParaAdicionar.Count; $rowIndex++) {
             continue
         }
 
+        # Remover ID_Mobilizacao eventualmente presente no Excel (será gerado pelo programa)
+        $ItemValues.Remove("ID_Mobilizacao") | Out-Null
+
         $PreparedItems += [PSCustomObject]@{
             LinhaExcel = $lineNum
             Values = $ItemValues
+            DisplayValues = $DisplayValues
+            OrigemAba = if ($Row.PSObject.Properties['OrigemAba']) { "$($Row.OrigemAba)" } else { "DESCONHECIDA" }
         }
     }
     catch {
@@ -877,62 +960,228 @@ if ($PreparedItems.Count -eq 0) {
     exit 1
 }
 
-foreach ($prepared in $PreparedItems) {
+# === GERAÇÃO DO ID DE MOBILIZAÇÃO E SUBMISSÃO UNIFICADA ===
+Write-Host ""
+Write-Host "Gerando ID de Mobilização único para esta submissão..." -ForegroundColor Cyan
+
+$ID_Mobilizacao   = $null
+$MaxMobRetries    = 5
+$MobRetryCount    = 0
+$MobSuccess       = $false
+$CreatedItemSPIds = @()
+
+while (-not $MobSuccess -and $MobRetryCount -lt $MaxMobRetries) {
+
+    if ($MobRetryCount -gt 0) {
+        $delay = 500 + (Get-Random -Minimum 100 -Maximum 500)
+        Write-Warning "  Tentativa $($MobRetryCount + 1)/$MaxMobRetries — aguardando ${delay}ms..."
+        Start-Sleep -Milliseconds $delay
+    }
+
+    # Leitura única: busca apenas o ID máximo atual via CAML (1 item ordenado DESC)
+    $maxVal      = Get-MaxMobilizacaoId -ListId $ListId
+    $candidateId = Format-MobilizacaoId -Value ($maxVal + 1)
+
+    Write-Host "  ID_Mobilizacao gerado: $candidateId" -ForegroundColor Cyan
+
+    # Submissão de todos os itens (PESSOAS + EQUIPAMENTOS) com o candidateId
+    $submissionOk    = $true
+    $CreatedItemSPIds = @()
+
+    foreach ($prepared in $PreparedItems) {
+        try {
+            $ItemValues = $prepared.Values
+            $ItemValues["ID_Mobilizacao"] = $candidateId
+            $origemAba = if ([string]::IsNullOrWhiteSpace("$($prepared.OrigemAba)")) { "DESCONHECIDA" } else { "$($prepared.OrigemAba)" }
+
+            $reportTitle = if ($ItemValues.Title) { $ItemValues.Title } else { "Item" }
+            Write-Host "Adicionando item [$origemAba]: $reportTitle..." -NoNewline
+
+            $novoItem = Add-PnPListItem -List $ListId -Values $ItemValues -ErrorAction Stop
+            $CreatedItemSPIds += $novoItem.Id
+            Write-Host " [OK] (ID SP: $($novoItem.Id))" -ForegroundColor Green
+            Write-Host "--- RESULT: SUCCESS:$origemAba ---" -ForegroundColor Gray
+
+            $ExecutionReport += [PSCustomObject]@{
+                "Linha"          = $prepared.LinhaExcel
+                "Item"           = $reportTitle
+                "ID_SP"          = $novoItem.Id
+                "ID_Mobilizacao" = $candidateId
+                "Status"         = "Sucesso"
+            }
+        }
+        catch {
+            Write-Host ' [ERRO]' -ForegroundColor Red
+            $errorDetail    = Get-DetailedErrorMessage -ErrorRecord $_
+            $payloadPreview = ($ItemValues.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Key)='$($_.Value)'" }) -join "; "
+            Write-Error "Erro ao adicionar item (linha $($prepared.LinhaExcel)): $errorDetail"
+            Write-Host "Campos enviados: $($ItemValues.Keys -join ', ')" -ForegroundColor DarkYellow
+            Write-Host "Payload: $payloadPreview" -ForegroundColor DarkYellow
+            Write-Host "--- RESULT: ERROR:$origemAba ---" -ForegroundColor Gray
+
+            $ExecutionReport += [PSCustomObject]@{
+                "Linha"          = $prepared.LinhaExcel
+                "Item"           = "Erro na linha"
+                "ID_SP"          = "N/A"
+                "ID_Mobilizacao" = $candidateId
+                "Status"         = "Erro: $errorDetail"
+            }
+            $submissionOk = $false
+        }
+    }
+
+    # Se houve erros de envio (não relacionados ao ID), encerra o loop sem retry de ID
+    if (-not $submissionOk) {
+        $MobSuccess = $true
+        break
+    }
+
+    # ── Validação pós-criação: confirmar unicidade do ID_Mobilizacao ──────────
+    Write-Host ""
+    Write-Host "  Validando unicidade de '$candidateId'..." -ForegroundColor Cyan
+    Start-Sleep -Milliseconds 800  # Aguarda propagação no SharePoint
+
     try {
-        $ItemValues = $prepared.Values
+        $camlQuery   = "<View><Query><Where><Eq><FieldRef Name='ID_Mobilizacao'/><Value Type='Text'>$candidateId</Value></Eq></Where></Query><RowLimit>500</RowLimit></View>"
+        $verifyItems = @(Get-PnPListItem -List $ListId -Query $camlQuery -ErrorAction Stop)
 
-        # DEBUG: Mostrar chaves sendo enviadas (opcional)
-        # Write-Host "Chaves: $($ItemValues.Keys -join ', ')" -ForegroundColor Gray
+        if ($verifyItems.Count -gt $CreatedItemSPIds.Count) {
+            # Colisão confirmada: outros itens gravaram o mesmo ID concorrentemente
+            Write-Warning "  Colisão confirmada: $($verifyItems.Count) itens com '$candidateId', esperado $($CreatedItemSPIds.Count)."
+            Write-Host "  Corrigindo IDs dos itens criados nesta submissão..." -ForegroundColor Yellow
 
-        Write-Host "Adicionando item: $($ItemValues.Title)..." -NoNewline
-        
-        # Adiciona o item à lista usando o ID da lista
-        $novoItem = Add-PnPListItem -List $ListId -Values $ItemValues -ErrorAction Stop
-        
-        Write-Host " [OK] (ID: $($novoItem.Id))" -ForegroundColor Green
-        Write-Host "--- RESULT: SUCCESS ---" -ForegroundColor Gray
+            $maxValAfter = Get-MaxMobilizacaoId -ListId $ListId
+            $correctedId = Format-MobilizacaoId -Value ($maxValAfter + 1)
 
-        # Adiciona ao relatório
-        $reportTitle = "Item"
-        if ($ItemValues.Title) { $reportTitle = $ItemValues.Title }
-        
-        $ExecutionReport += [PSCustomObject]@{
-            "Linha" = $prepared.LinhaExcel
-            "Item"  = $reportTitle
-            "ID"    = $novoItem.Id
-            "Status" = "Sucesso"
+            $correctionOk = $true
+            foreach ($spId in $CreatedItemSPIds) {
+                try {
+                    Set-PnPListItem -List $ListId -Identity $spId -Values @{ "ID_Mobilizacao" = $correctedId } -ErrorAction Stop
+                }
+                catch {
+                    Write-Warning "  Falha ao corrigir item SP $spId : $_"
+                    $correctionOk = $false
+                }
+            }
+
+            if ($correctionOk) {
+                Write-Host "  Correção concluída. Novo ID_Mobilizacao: $correctedId" -ForegroundColor Green
+                # Atualiza o relatório com o ID corrigido
+                foreach ($rep in $ExecutionReport) {
+                    if ($rep.ID_Mobilizacao -eq $candidateId) {
+                        $rep | Add-Member -MemberType NoteProperty -Name "ID_Mobilizacao" -Value $correctedId -Force
+                    }
+                }
+                $candidateId = $correctedId
+            }
+            else {
+                Write-Warning "  Correção incompleta. Verifique manualmente os itens SP: $($CreatedItemSPIds -join ', ')"
+            }
+        }
+        else {
+            Write-Host "  Unicidade confirmada: $($verifyItems.Count) item(ns) com ID '$candidateId'." -ForegroundColor Green
         }
     }
     catch {
-        Write-Host ' [ERRO]' -ForegroundColor Red
-        $errorDetail = Get-DetailedErrorMessage -ErrorRecord $_
-        $payloadPreview = ($ItemValues.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Key)='$($_.Value)'" }) -join "; "
-        Write-Error "Erro ao adicionar item (linha $($prepared.LinhaExcel)): $errorDetail"
-        Write-Host "Campos enviados: $($ItemValues.Keys -join ', ')" -ForegroundColor DarkYellow
-        Write-Host "Payload: $payloadPreview" -ForegroundColor DarkYellow
-        Write-Host '--- RESULT: ERROR ---' -ForegroundColor Gray
-
-        # Adiciona ao relatório de erro
-        $reportTitle = "Erro na linha"
-        $ExecutionReport += [PSCustomObject]@{
-            "Linha" = $prepared.LinhaExcel
-            "Item"  = $reportTitle
-            "ID"    = "N/A"
-            "Status" = "Erro: $errorDetail"
-        }
+        Write-Warning "  Validação pós-criação falhou: $_ — Verifique manualmente."
     }
+
+    $ID_Mobilizacao = $candidateId
+    $MobSuccess     = $true
+}
+
+if (-not $MobSuccess -and $MobRetryCount -ge $MaxMobRetries) {
+    Write-Error "Não foi possível gerar um ID_Mobilizacao único após $MaxMobRetries tentativas."
+    exit 1
 }
 
 Write-Host ""
 Write-Host '=== RELATORIO DE IMPORTACAO ===' -ForegroundColor Cyan
 if ($ExecutionReport) {
-    $ExecutionReport | Format-Table -Property Linha, Item, ID, Status -AutoSize | Out-String | Write-Host
+    $ExecutionReport | Format-Table -Property Linha, Item, ID_SP, ID_Mobilizacao, Status -AutoSize | Out-String | Write-Host
 } else {
     Write-Host 'Nenhum item foi processado.' -ForegroundColor Yellow
 }
 
 Write-Host '=== FINAL SUMMARY ===' -ForegroundColor Cyan
+if ($ID_Mobilizacao) {
+    Write-Host "ID de Mobilizacao desta submissao: $ID_Mobilizacao" -ForegroundColor Green
+}
 Write-Host 'Processo finalizado.' -ForegroundColor Cyan
+
+# === GERAÇÃO DE JSON PARA RELATÓRIO EXCEL ===
+try {
+    $submissionDate = Get-Date -Format "dd/MM/yyyy HH:mm:ss"
+
+    # Obter nome e e-mail do solicitante (usuário conectado ao SharePoint)
+    $requesterName  = ""
+    $requesterEmail = ""
+    try {
+        $currentUser    = Get-PnPCurrentUser -ErrorAction SilentlyContinue
+        if ($currentUser) {
+            $requesterName  = "$($currentUser.Title)"
+            $requesterEmail = "$($currentUser.Email)"
+        }
+    } catch { }
+
+    # Mapear InternalName -> Display Name para todos os campos enviados
+    $fieldDisplayMap = @{}
+    foreach ($prepared in $PreparedItems) {
+        foreach ($key in @($prepared.Values.Keys)) {
+            if ($key -eq "ID_Mobilizacao") { continue }
+            if (-not $fieldDisplayMap.ContainsKey($key)) {
+                $displayName = if ($FieldByInternalName.ContainsKey($key)) { $FieldByInternalName[$key].Title } else { $key }
+                $fieldDisplayMap[$key] = $displayName
+            }
+        }
+    }
+
+    # Construir lista de itens do relatório
+    $reportItems = [System.Collections.Generic.List[object]]::new()
+    foreach ($rep in $ExecutionReport) {
+        $matching = $PreparedItems | Where-Object { $_.LinhaExcel -eq $rep.Linha } | Select-Object -First 1
+        $fieldValues = [ordered]@{}
+        if ($matching) {
+            foreach ($key in @($matching.Values.Keys)) {
+                if ($key -eq "ID_Mobilizacao") { continue }
+                $dispName = if ($fieldDisplayMap.ContainsKey($key)) { $fieldDisplayMap[$key] } else { $key }
+                # Preferir valor legível (DisplayValues) para campos Lookup
+                if ($matching.DisplayValues -and $matching.DisplayValues.ContainsKey($key)) {
+                    $rawVal = $matching.DisplayValues[$key]
+                } else {
+                    $rawVal = $matching.Values[$key]
+                }
+                # Datas: formatar para PT-BR
+                if ($rawVal -is [DateTime]) {
+                    $rawVal = $rawVal.ToString("dd/MM/yyyy")
+                }
+                $fieldValues[$dispName] = "$rawVal"
+            }
+        }
+        $reportItems.Add([PSCustomObject]@{
+            id_sp   = "$($rep.ID_SP)"
+            status  = "$($rep.Status)"
+            linha   = $rep.Linha
+            fields  = $fieldValues
+        })
+    }
+
+    $reportPayload = [PSCustomObject]@{
+        submission_datetime = $submissionDate
+        id_mobilizacao      = "$ID_Mobilizacao"
+        requester_name      = $requesterName
+        requester_email     = $requesterEmail
+        items               = @($reportItems)
+    }
+
+    $jsonStr = $reportPayload | ConvertTo-Json -Depth 5 -Compress
+    Write-Output "---REPORT_JSON_START---"
+    Write-Output $jsonStr
+    Write-Output "---REPORT_JSON_END---"
+}
+catch {
+    Write-Warning "Não foi possível gerar dados do relatório: $_"
+}
 
 $hasUploadErrors = $ExecutionReport | Where-Object { "$($_.Status)" -like "Erro:*" } | Select-Object -First 1
 if ($hasUploadErrors) {
