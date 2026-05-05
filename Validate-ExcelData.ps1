@@ -591,12 +591,34 @@ if ($DesmobField) { Write-Host "[Validação] Campo Data Desmobilização: $($De
 if ($ItensParaValidar.Count -gt 0) {
     $excelColumns = $ItensParaValidar[0].PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' } | ForEach-Object { $_.Name }
     Write-Host "[Validação] Colunas do Excel: $($excelColumns -join ', ')" -ForegroundColor Gray
+
+    $hasGrupoColumn = $false
+    foreach ($colName in $excelColumns) {
+        if ("$colName".Trim() -eq "GRUPO") {
+            $hasGrupoColumn = $true
+            break
+        }
+    }
+    if (-not $hasGrupoColumn) {
+        $result = @{ status = "error"; errors = @("A coluna obrigatória 'GRUPO' não foi encontrada na aba '$SheetName'.") }
+        Write-Output "---VALIDATION_JSON_START---"
+        Write-Output ($result | ConvertTo-Json -Compress)
+        Write-Output "---VALIDATION_JSON_END---"
+        Disconnect-PnPOnline -ErrorAction SilentlyContinue
+        exit 1
+    }
 }
 
 # --- Loop de validação por linha ---
 for ($i = 0; $i -lt $ItensParaValidar.Count; $i++) {
     $row = $ItensParaValidar[$i]
     $lineNum = $i + 2  # Linha 1 = cabeçalho no Excel
+    $groupValue = $null
+    $groupProp = $row.PSObject.Properties | Where-Object { $_.Name.Trim() -eq "GRUPO" } | Select-Object -First 1
+    if ($groupProp) {
+        $groupValue = $groupProp.Value
+    }
+    $groupTag = if ($null -ne $groupValue -and -not [string]::IsNullOrWhiteSpace("$groupValue")) { "[GRUPO $groupValue] " } else { "[GRUPO VAZIO] " }
 
     # Pular linhas completamente vazias
     $hasAnyData = $false
@@ -607,6 +629,13 @@ for ($i = 0; $i -lt $ItensParaValidar.Count; $i++) {
         }
     }
     if (-not $hasAnyData) { continue }
+
+    if ($null -eq $groupValue -or [string]::IsNullOrWhiteSpace("$groupValue")) {
+        $errMsg = "${groupTag}Linha ${lineNum}: GRUPO é obrigatório e está vazio."
+        $ValidationErrors += $errMsg
+        Write-Host "  [FALHA] $errMsg" -ForegroundColor Red
+        continue
+    }
 
     Write-Host "[Validação] Validando linha $lineNum..." -ForegroundColor Gray
 
@@ -624,7 +653,7 @@ for ($i = 0; $i -lt $ItensParaValidar.Count; $i++) {
         if ($isEmpty) {
             $hasDefault = -not [string]::IsNullOrWhiteSpace("$($field.DefaultValue)")
             if (-not $hasDefault) {
-                $errMsg = "Linha ${lineNum}: Campo '$fieldDisplayName' é obrigatório e não possui valor padrão."
+                $errMsg = "${groupTag}Linha ${lineNum}: Campo '$fieldDisplayName' é obrigatório e não possui valor padrão."
                 $ValidationErrors += $errMsg
                 Write-Host "  [FALHA] $errMsg" -ForegroundColor Red
             } else {
@@ -663,7 +692,7 @@ for ($i = 0; $i -lt $ItensParaValidar.Count; $i++) {
     # Data de Acesso >= Data de Solicitação
     if ($dataAcesso -and $dataSolicitacao) {
         if ($dataAcesso -lt $dataSolicitacao) {
-            $errMsg = "Linha ${lineNum}: Data de Acesso ($($dataAcesso.ToString('dd/MM/yyyy'))) é anterior à Data de Solicitação ($($dataSolicitacao.ToString('dd/MM/yyyy')))."
+            $errMsg = "${groupTag}Linha ${lineNum}: Data de Acesso ($($dataAcesso.ToString('dd/MM/yyyy'))) é anterior à Data de Solicitação ($($dataSolicitacao.ToString('dd/MM/yyyy')))."
             $ValidationErrors += $errMsg
             Write-Host "  [FALHA] $errMsg" -ForegroundColor Red
         }
@@ -672,7 +701,7 @@ for ($i = 0; $i -lt $ItensParaValidar.Count; $i++) {
     # Data de Desmobilização >= Data de Acesso
     if ($dataDesmob -and $dataAcesso) {
         if ($dataDesmob -lt $dataAcesso) {
-            $errMsg = "Linha ${lineNum}: Data de Desmobilização ($($dataDesmob.ToString('dd/MM/yyyy'))) é anterior à Data de Acesso ($($dataAcesso.ToString('dd/MM/yyyy')))."
+            $errMsg = "${groupTag}Linha ${lineNum}: Data de Desmobilização ($($dataDesmob.ToString('dd/MM/yyyy'))) é anterior à Data de Acesso ($($dataAcesso.ToString('dd/MM/yyyy')))."
             $ValidationErrors += $errMsg
             Write-Host "  [FALHA] $errMsg" -ForegroundColor Red
         }

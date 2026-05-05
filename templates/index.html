@@ -110,6 +110,15 @@
             letter-spacing: 0.05em;
             margin-bottom: 8px;
         }
+        .sheet-progress-group {
+            font-size: 0.78rem;
+            color: var(--vestas-night-sky);
+            margin-bottom: 10px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            background-color: #f3f7fc;
+            border: 1px solid var(--vestas-light-grey);
+        }
         .sheet-progress-row {
             margin-bottom: 10px;
         }
@@ -236,17 +245,26 @@
         #reportDownloadBanner {
             display: none;
             margin-top: 16px;
-            padding: 14px 20px;
-            background-color: rgba(25, 115, 110, 0.08);
-            border: 1px solid rgba(25, 115, 110, 0.3);
-            border-radius: 10px;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            flex-wrap: wrap;
         }
-        #reportDownloadBanner.visible {
-            display: flex;
+        #reportDownloadBanner .card-header {
+            padding: 14px 20px;
+        }
+        #reportDownloadInfo {
+            font-size: 0.82rem;
+            color: rgba(255, 255, 255, 0.82);
+            font-weight: 500;
+        }
+        #reportSessionContainer {
+            padding: 16px 20px;
+            background-color: #ffffff;
+        }
+        #reportSessionContainer .table {
+            margin-bottom: 0;
+            font-size: 0.82rem;
+        }
+        #reportSessionContainer .table thead {
+            background-color: var(--vestas-night-sky);
+            color: #ffffff;
         }
         .btn-vestas-download {
             background-color: var(--vestas-earth-green);
@@ -307,7 +325,7 @@
                     <h4 class="mb-0">Solicitador de Mobilizações</h4>
                 </div>
                 <div class="card-body">
-                    <p class="text-muted">Selecione o arquivo Excel para iniciar a importação. As abas <strong>PESSOAS</strong> e <strong>EQUIPAMENTOS</strong> serão processadas automaticamente.</p>
+                    <p class="text-muted">Selecione o arquivo Excel para iniciar a importação. As abas <strong>PESSOAS</strong> e <strong>EQUIPAMENTOS</strong> serão processadas automaticamente por <strong>GRUPO</strong> (coluna A obrigatória nas duas abas).</p>
 
                     <form id="uploadForm" onsubmit="return false;">
                         <div class="mb-3">
@@ -361,6 +379,7 @@
 
                 <div id="sheetProgressSection">
                     <div class="sheet-progress-title">Progresso por Aba</div>
+                    <div class="sheet-progress-group">Grupo atual: <strong id="currentGroupName">-</strong></div>
 
                     <div class="sheet-progress-row">
                         <div class="d-flex justify-content-between align-items-center mb-1">
@@ -387,14 +406,12 @@
             <!-- Buffer de log (oculto) — lido pelo botão de download -->
             <div id="logArea"></div>
 
-            <div id="reportDownloadBanner">
-                <div>
-                    <strong style="color: var(--vestas-earth-green);">&#10003; Relatório de mobilização gerado com sucesso</strong>
-                    <div style="font-size:0.82rem; color: var(--vestas-dark-grey); margin-top:2px;" id="reportDownloadInfo">Relatório de mobilização da submissão disponível para download.</div>
+            <div id="reportDownloadBanner" class="card">
+                <div class="card-header vestas-primary d-flex align-items-center justify-content-between">
+                    <span class="fw-bold">&#10003; Relatórios de mobilização gerados</span>
+                    <span id="reportDownloadInfo"></span>
                 </div>
-                <a id="btnDownloadReport" href="#" class="btn btn-vestas-download" download>
-                    📊 Baixar Relatório de Mobilização
-                </a>
+                <div class="card-body" id="reportSessionContainer"></div>
             </div>
 
             <div class="footer-info">
@@ -510,10 +527,12 @@
         const equipProgressBar = document.getElementById('equipProgressBar');
         const peopleProgressCount = document.getElementById('peopleProgressCount');
         const equipProgressCount = document.getElementById('equipProgressCount');
+        const currentGroupNameEl = document.getElementById('currentGroupName');
 
         const sheetProgress = {
             PESSOAS: { expected: 0, done: 0 },
             EQUIPAMENTOS: { expected: 0, done: 0 },
+            currentGroup: '-',
             uploadStarted: false
         };
 
@@ -565,6 +584,9 @@
                 sheetProgress.EQUIPAMENTOS.done,
                 sheetProgress.EQUIPAMENTOS.expected
             );
+            if (currentGroupNameEl) {
+                currentGroupNameEl.textContent = sheetProgress.currentGroup || '-';
+            }
         };
 
         const resetSheetProgress = () => {
@@ -572,7 +594,10 @@
             sheetProgress.PESSOAS.done = 0;
             sheetProgress.EQUIPAMENTOS.expected = 0;
             sheetProgress.EQUIPAMENTOS.done = 0;
+            sheetProgress.currentGroup = '-';
             sheetProgress.uploadStarted = false;
+            peopleProgressBar.style.backgroundColor = 'var(--vestas-blue-sky-02)';
+            equipProgressBar.style.backgroundColor = 'var(--vestas-earth-orange)';
             sheetProgressSection.style.display = 'none';
             refreshSheetProgressUI();
         };
@@ -654,20 +679,77 @@
 
         // ── Stats ─────────────────────────────────────────────────────────
         let total = 0, success = 0, errors = 0;
-        let currentReportFilename = null;
+        let generatedReports = [];
 
         const reportBanner      = document.getElementById('reportDownloadBanner');
-        const btnDownloadReport = document.getElementById('btnDownloadReport');
+        const reportDownloadInfo = document.getElementById('reportDownloadInfo');
+        const reportSessionContainer = document.getElementById('reportSessionContainer');
 
-        const showReportDownload = (filename) => {
-            currentReportFilename = filename;
-            btnDownloadReport.href = `/download-report/${encodeURIComponent(filename)}`;
-            reportBanner.classList.add('visible');
+        const renderReportLinks = () => {
+            reportSessionContainer.innerHTML = '';
+
+            if (generatedReports.length === 0) {
+                reportDownloadInfo.textContent = '';
+                reportBanner.style.display = 'none';
+                return;
+            }
+
+            reportBanner.style.display = 'block';
+            reportDownloadInfo.textContent = `${generatedReports.length} relatório(s) gerado(s).`;
+
+            const table = document.createElement('table');
+            table.className = 'table table-hover table-sm align-middle';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>ID Mobilização</th>
+                        <th>Arquivo</th>
+                        <th class="text-center">Download</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>`;
+
+            const tbody = table.querySelector('tbody');
+            generatedReports.forEach(rep => {
+                const tr = document.createElement('tr');
+                const a = document.createElement('a');
+                a.href = `/download-report/${encodeURIComponent(rep.filename)}`;
+                a.download = rep.filename;
+                a.className = 'btn btn-vestas-download btn-sm';
+                a.style.padding = '4px 10px';
+                a.style.fontSize = '0.8rem';
+                a.textContent = '📥';
+
+                tr.innerHTML = `
+                    <td>${rep.id_mobilizacao || '-'}</td>
+                    <td style="font-size:0.82rem;word-break:break-all;">${rep.filename}</td>
+                    <td class="text-center"></td>`;
+
+                tr.querySelector('td:last-child').appendChild(a);
+                tbody.appendChild(tr);
+            });
+            reportSessionContainer.appendChild(table);
+        };
+
+        const addReportDownload = (reportItem) => {
+            const normalizedFile = (reportItem?.filename || '').trim();
+            if (!normalizedFile) return;
+
+            const alreadyExists = generatedReports.some(r => (r.filename || '').trim() === normalizedFile);
+            if (alreadyExists) return;
+
+            generatedReports.push(reportItem);
+            // Reports are rendered only when the entire process finishes
         };
 
         const hideReportDownload = () => {
-            currentReportFilename = null;
-            reportBanner.classList.remove('visible');
+            generatedReports = [];
+            renderReportLinks();
+        };
+
+        const resetReports = () => {
+            generatedReports = [];
+            renderReportLinks();
         };
 
         const resetStats = () => {
@@ -705,6 +787,7 @@
             if (!fileInput.files[0]) { alert('Por favor, selecione um arquivo.'); return; }
 
             hideReportDownload();
+            resetReports();
             resetStats();
             resetProgress();
             resetSheetProgress();
@@ -720,11 +803,11 @@
             let validationResult = null;
 
             // ── FASE 1: VALIDAÇÃO ─────────────────────────────────────────
-            setProgress(5, 'Fase 1 — Validando dados...', 'Enviando arquivo...');
+            setProgress(5, 'Fase 1 — Conectando ao Sharepoint...', 'Enviando arquivo...');
             appendLog('FASE 1: Validando dados antes do upload...\n');
 
             try {
-                setProgress(10, 'Fase 1 — Validando dados...', 'Conectando ao SharePoint...');
+                setProgress(10, 'Fase 1 — Conectando ao Sharepoint...', 'Conectando ao SharePoint...');
                 appendLog('Conectando ao SharePoint e verificando dados...\n');
 
                 const validateResponse = await fetch('/validate', { method: 'POST', body: formData });
@@ -742,7 +825,7 @@
                     const decoder = new TextDecoder('utf-8');
                     let fullText  = '';
                     let done, value;
-                    setProgress(18, 'Fase 1 — Validando dados...', 'Analisando dados...');
+                    setProgress(18, 'Fase 1 — Conectando ao Sharepoint...', 'Analisando dados...');
                     while (true) {
                         ({ done, value } = await reader.read());
                         if (done) break;
@@ -785,6 +868,11 @@
                     enableLogDownload(); return;
                 }
 
+                sheetProgress.PESSOAS.expected = Number(validationResult?.sheet_counts?.PESSOAS || 0);
+                sheetProgress.EQUIPAMENTOS.expected = Number(validationResult?.sheet_counts?.EQUIPAMENTOS || 0);
+                sheetProgressSection.style.display = 'block';
+                refreshSheetProgressUI();
+
                 setProgress(30, 'Fase 1 concluída ✓', `${totalLines} linha(s) validada(s).`);
                 appendLog(`\n✅ Validação concluída. ${totalLines} linha(s) válida(s).\n`);
 
@@ -815,9 +903,9 @@
                 );
             };
 
-            btnText.textContent = 'Validando e preparando dados...';
+            btnText.textContent = 'Validando dados...';
             setProgress(35, 'Fase 2 — Validando e preparando dados...', 'Preparando envio...');
-            appendLog('\n' + '='.repeat(40) + '\nFASE 2: Enviando dados ao SharePoint...\n' + '='.repeat(40) + '\n\n');
+            appendLog('\n' + '='.repeat(40) + '\nFASE 2: Validando e preparando dados...\n' + '='.repeat(40) + '\n\n');
 
             try {
                 const response = await fetch('/run-script', {
@@ -828,43 +916,86 @@
 
                 const reader  = response.body.getReader();
                 const decoder = new TextDecoder();
+                let streamBuffer = '';
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
+                const processStreamLine = (lineRaw) => {
+                    const line = lineRaw.replace(/\r$/, '');
+                    const trimmed = line.trim();
 
-                    const chunk = decoder.decode(value);
+                    const groupProgressMatch = trimmed.match(/^---GROUP_PROGRESS:(\d+)\/(\d+):(.*)---$/);
+                    if (groupProgressMatch) {
+                        const current = Number(groupProgressMatch[1] || 0);
+                        const totalGroups = Number(groupProgressMatch[2] || 0) || 1;
+                        const groupName = groupProgressMatch[3] || '';
+                        sheetProgressSection.style.display = 'block';
+                        sheetProgress.currentGroup = groupName || '-';
+                        // Reset per-group progress bars so the user sees fresh progress for each group
+                        sheetProgress.PESSOAS.done = 0;
+                        sheetProgress.EQUIPAMENTOS.done = 0;
+                        peopleProgressBar.style.backgroundColor = 'var(--vestas-blue-sky-02)';
+                        equipProgressBar.style.backgroundColor = 'var(--vestas-earth-orange)';
+                        refreshSheetProgressUI();
+                        const basePct = 35 + ((current - 1) * 50 / totalGroups);
+                        setProgress(basePct, `Fase 2 — Processando grupo ${current}/${totalGroups}`, `GRUPO: ${groupName}`);
+                        return;
+                    }
 
-                    const peopleCountMatch = chunk.match(/PESSOAS:\s*(\d+)\s*item\(ns\)\s*carregado\(s\)/i);
+                    const groupResultMatch = trimmed.match(/^---GROUP_RESULT:(.+)---$/);
+                    if (groupResultMatch) {
+                        try {
+                            const resultObj = JSON.parse(groupResultMatch[1]);
+                            if (resultObj?.report_filename) {
+                                addReportDownload({
+                                    id_mobilizacao: resultObj.id_mobilizacao || '',
+                                    filename: resultObj.report_filename
+                                });
+                            }
+                        } catch {
+                            // marker inválido; ignora
+                        }
+                        return;
+                    }
+
+                    const reportMatch = trimmed.match(/^---REPORT_FILE:(.+)---$/);
+                    if (reportMatch) {
+                        // Link de relatório já é tratado via GROUP_RESULT para evitar duplicidade.
+                        return;
+                    }
+
+                    if (trimmed === '---GROUP_SUMMARY_JSON_START---' || trimmed === '---GROUP_SUMMARY_JSON_END---') {
+                        return;
+                    }
+
+                    const peopleCountMatch = line.match(/PESSOAS:\s*(\d+)\s*item\(ns\)\s*carregado\(s\)/i);
                     if (peopleCountMatch) {
                         sheetProgress.PESSOAS.expected = Number(peopleCountMatch[1] || 0);
                         refreshSheetProgressUI();
                     }
-                    const equipCountMatch = chunk.match(/EQUIPAMENTOS:\s*(\d+)\s*item\(ns\)\s*carregado\(s\)/i);
+                    const equipCountMatch = line.match(/EQUIPAMENTOS:\s*(\d+)\s*item\(ns\)\s*carregado\(s\)/i);
                     if (equipCountMatch) {
                         sheetProgress.EQUIPAMENTOS.expected = Number(equipCountMatch[1] || 0);
                         refreshSheetProgressUI();
                     }
 
-                    // ── Detectar marcos de progresso no stream ──
-                    if (chunk.includes('Gerando ID de Mobilização') || chunk.includes('Gerando ID de Mobilizacao')) {
+                    if (line.includes('Gerando ID de Mobilização') || line.includes('Gerando ID de Mobilizacao')) {
                         setProgress(40, 'Fase 2 — Gerando ID de Mobilização...', '');
                     }
-                    if (chunk.includes('ID_Mobilizacao gerado:')) {
-                        const m = chunk.match(/ID_Mobilizacao gerado:\s*(\S+)/);
+                    if (line.includes('ID_Mobilizacao gerado:')) {
+                        const m = line.match(/ID_Mobilizacao gerado:\s*(\S+)/);
                         setProgress(44, 'Fase 2 — ID gerado', m ? `ID: ${m[1]}` : '');
                     }
-                    if (chunk.includes('Adicionando item [')) {
+                    if (line.includes('Adicionando item [')) {
                         if (!sheetProgress.uploadStarted) {
                             sheetProgress.uploadStarted = true;
                             sheetProgressSection.style.display = 'block';
                             btnText.textContent = 'Enviando ao SharePoint...';
                         }
-                        const m = chunk.match(/Adicionando item\s*\[[^\]]+\]:\s*(.+)/);
+                        const m = line.match(/Adicionando item\s*\[[^\]]+\]:\s*(.+)/);
                         const itemName = m ? m[1].trim() : '';
                         setProgress(_progressValue, 'Fase 2 — Enviando itens...', itemName ? `Enviando: ${itemName}` : '');
                     }
-                    const resultMatches = Array.from(chunk.matchAll(/---\s*RESULT:\s*(SUCCESS|ERROR)(?::([A-Z_]+))?\s*---/g));
+
+                    const resultMatches = Array.from(line.matchAll(/---\s*RESULT:\s*(SUCCESS|ERROR)(?::([A-Z_]+))?\s*---/g));
                     if (resultMatches.length > 0) {
                         for (const match of resultMatches) {
                             const resultType = (match[1] || '').toUpperCase();
@@ -889,37 +1020,40 @@
                         refreshSheetProgressUI();
                         updateOverallItemProgress();
                     }
-                    if (chunk.includes('Validando unicidade')) {
-                        setProgress(90, 'Fase 2 — Validando unicidade do ID...', '');
-                    }
-                    if (chunk.includes('Unicidade confirmada') || chunk.includes('Correção concluída')) {
-                        setProgress(93, 'Fase 2 — Unicidade confirmada', '');
-                    }
-                    if (chunk.includes('[SUCESSO]') || chunk.includes('Processo finalizado com código 0')) {
-                        setProgress(97, 'Finalizando...', 'Gerando relatório...');
+
+                    if (line.includes('[SUCESSO]')) {
+                        setProgress(97, 'Finalizando...', 'Gerando relatórios...');
                     }
 
-                    // Relatório gerado
-                    const reportMatch = chunk.match(/---REPORT_FILE:([^-]+)---/);
-                    if (reportMatch) {
-                        showReportDownload(reportMatch[1].trim());
-                        setProgress(100, 'Concluído ✓', 'Importação finalizada com sucesso.');
-                    }
-
-                    // Log limpo
-                    const cleanChunk = chunk
+                    const cleanLine = line
                         .replace(/---\s*RESULT:\s*SUCCESS(?::[A-Z_]+)?\s*---/g, '✅ Linha processada com sucesso.')
-                        .replace(/---\s*RESULT:\s*ERROR(?::[A-Z_]+)?\s*---/g, '❌ Erro ao processar linha.')
-                        .replace(/=== FINAL SUMMARY ===/g, '\n RESUMO FINAL:')
-                        .replace(/ID de Mobilizacao desta submissao:/g, '🔖 ID de Mobilização:')
-                        .replace(/---REPORT_FILE:[^-]+---\n?/g, '');
-                    appendLog(cleanChunk);
+                        .replace(/---\s*RESULT:\s*ERROR(?::[A-Z_]+)?\s*---/g, '❌ Erro ao processar linha.');
+                    appendLog(cleanLine + '\n');
+                };
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    streamBuffer += chunk;
+
+                    const lines = streamBuffer.split('\n');
+                    streamBuffer = lines.pop() || '';
+                    lines.forEach(processStreamLine);
+                }
+
+                if (streamBuffer.trim() !== '') {
+                    processStreamLine(streamBuffer);
                 }
 
                 // Se não chegou a 100 via marcador, finaliza
                 if (_progressValue < 100) {
                     if (errors === 0) {
                         setProgress(100, 'Concluído ✓', `${success} item(ns) importado(s) com sucesso.`);
+                        // Turn sheet bars green only when the entire process finishes without errors
+                        peopleProgressBar.style.backgroundColor = 'var(--vestas-earth-green)';
+                        equipProgressBar.style.backgroundColor = 'var(--vestas-earth-green)';
                     } else {
                         setProgress(100, `Concluído com erros`, `${success} sucesso(s), ${errors} falha(s).`);
                         progressBar.style.backgroundColor = errors === total
@@ -927,6 +1061,8 @@
                         progressBar.classList.remove('progress-bar-animated');
                     }
                 }
+                // Show generated reports only after the entire process is done
+                renderReportLinks();
 
             } catch (error) {
                 setProgress(0, 'Erro crítico no upload', error.message);

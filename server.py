@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 from flask import Flask, render_template, request, Response, stream_with_context, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from datetime import datetime
@@ -43,10 +44,10 @@ def end_job():
             ACTIVE_JOBS -= 1
 
 
-def generate_report_excel(report_data: dict) -> str:
+def generate_report_excel(report_data: dict) -> tuple[str, str]:
     """
     Gera um arquivo Excel formatado a partir do JSON de relatório emitido pelo PowerShell.
-    Retorna o caminho absoluto do arquivo gerado.
+    Retorna (nome_arquivo, caminho_absoluto).
     """
     # ── Cores Vestas ──────────────────────────────────────────────────────────
     COLOR_NIGHT_SKY  = "1F3144"
@@ -133,12 +134,12 @@ def generate_report_excel(report_data: dict) -> str:
                            end_row=r_offset,   end_column=total_cols)
         ws.row_dimensions[r_offset].height = 18
 
-    # ── ROW 6 – Linha de separação ────────────────────────────────────────────
-    ws.row_dimensions[6].height = 8
+    # ── ROW 7 – Linha de separação ────────────────────────────────────────────
+    ws.row_dimensions[7].height = 8
 
-    # ── ROW 7 – Cabeçalho das colunas ─────────────────────────────────────────
-    hdr_row = 7
-    headers = ["ID SP", "Status"] + display_cols
+    # ── ROW 8 – Cabeçalho das colunas ─────────────────────────────────────────
+    hdr_row = 8
+    headers = ["ID Elemento", "Status"] + display_cols
     for col_idx, header_text in enumerate(headers, start=1):
         cell = ws.cell(row=hdr_row, column=col_idx, value=header_text)
         cell.fill      = fill_col_hdr
@@ -152,7 +153,7 @@ def generate_report_excel(report_data: dict) -> str:
         is_error = "Erro" in str(item.get("status", ""))
         row_fill = fill_error if is_error else fill_success
 
-        # ID SP
+        # ID Elemento (ID SP)
         id_sp_cell = ws.cell(row=row_offset, column=1, value=item.get("id_sp", ""))
         id_sp_cell.fill      = row_fill
         id_sp_cell.font      = font_value_bold
@@ -190,8 +191,9 @@ def generate_report_excel(report_data: dict) -> str:
 
     # ── Salvar ────────────────────────────────────────────────────────────────
     os.makedirs(REPORTS_FOLDER, exist_ok=True)
-    safe_id  = re.sub(r"[^A-Za-z0-9]", "_", id_mob) if id_mob else "sem_id"
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_id = re.sub(r"[^A-Za-z0-9]", "_", id_mob) if id_mob else "sem_id"
+    # Microssegundos evitam colisão quando múltiplos grupos finalizam no mesmo segundo.
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     report_filename = f"Relatorio_Mob_{safe_id}_{timestamp}.xlsx"
     report_path     = os.path.abspath(os.path.join(REPORTS_FOLDER, report_filename))
     wb.save(report_path)
@@ -268,6 +270,20 @@ def build_powershell_template_update_command(script_path, template_path):
     ]
 
 
+def _popen_hidden_kwargs() -> dict:
+    """Oculta janelas de terminal ao executar subprocessos no Windows."""
+    if os.name != 'nt':
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0
+    return {
+        'startupinfo': startupinfo,
+        'creationflags': subprocess.CREATE_NO_WINDOW
+    }
+
+
 def get_template_status():
     if not os.path.exists(TEMPLATE_STATUS_FILE):
         return {'last_updated': None}
@@ -342,6 +358,163 @@ def score_decoded_text(text):
     mojibake_penalty = sum(text.count(marker) for marker in ('Ã', 'Â', 'â')) * 6
     return replacement_penalty + mojibake_penalty
 
+def _count_excel_rows(file_path, sheet_name):
+    """Conta linhas com dados (excluindo cabeçalho) em uma aba do Excel usando openpyxl."""
+    try:
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        if sheet_name not in wb.sheetnames:
+            return 0
+        ws = wb[sheet_name]
+        count = 0
+        for row in ws.iter_rows(min_row=2):
+            if any(cell.value is not None and str(cell.value).strip() for cell in row):
+                count += 1
+        return count
+    except Exception:
+        return 0
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+
+def _value_to_exact_text(value):
+    """Converte valor de célula para comparação textual exata (sem normalização)."""
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _row_has_any_data(values):
+    for value in values:
+        if value is None:
+            continue
+        if str(value).strip() != "":
+            return True
+    return False
+
+
+def _read_grouped_excel(file_path: str) -> tuple[dict | None, list[str]]:
+    """
+    Lê abas PESSOAS e EQUIPAMENTOS exigindo coluna A = GRUPO.
+    Retorna (data, errors), onde data contém headers, linhas por grupo e ordem de grupos.
+    """
+    errors: list[str] = []
+    required_sheets = ["PESSOAS", "EQUIPAMENTOS"]
+
+    try:
+        wb = openpyxl.load_workbook(file_path, data_only=True)
+    except Exception as exc:
+        return None, [f"Não foi possível abrir o Excel: {exc}"]
+
+    try:
+        for sheet in required_sheets:
+            if sheet not in wb.sheetnames:
+                errors.append(f"A aba obrigatória '{sheet}' não foi encontrada.")
+
+        if errors:
+            return None, errors
+
+        groups_order: list[str] = []
+        groups_seen: set[str] = set()
+
+        data = {
+            "group_order": groups_order,
+            "sheets": {
+                "PESSOAS": {"headers": [], "rows": [], "rows_by_group": {}},
+                "EQUIPAMENTOS": {"headers": [], "rows": [], "rows_by_group": {}},
+            }
+        }
+
+        for sheet in required_sheets:
+            ws = wb[sheet]
+            max_col = max(1, ws.max_column)
+            headers = [ws.cell(row=1, column=col).value for col in range(1, max_col + 1)]
+            data["sheets"][sheet]["headers"] = headers
+
+            header_a = "" if headers[0] is None else str(headers[0]).strip()
+            if header_a != "GRUPO":
+                errors.append(
+                    f"A aba '{sheet}' deve ter a coluna A com cabeçalho exatamente 'GRUPO'."
+                )
+                continue
+
+            duplicate_keys: dict[str, set[tuple[str, ...]]] = {}
+
+            for row_idx in range(2, ws.max_row + 1):
+                row_values = [ws.cell(row=row_idx, column=col).value for col in range(1, max_col + 1)]
+                if not _row_has_any_data(row_values):
+                    continue
+
+                group_raw = row_values[0]
+                if group_raw is None or str(group_raw).strip() == "":
+                    errors.append(f"Aba {sheet}, linha {row_idx}: GRUPO vazio.")
+                    continue
+
+                group_key = _value_to_exact_text(group_raw)
+                signature = tuple(_value_to_exact_text(v) for v in row_values)
+
+                duplicate_bucket = duplicate_keys.setdefault(group_key, set())
+                if signature in duplicate_bucket:
+                    errors.append(
+                        f"Aba {sheet}, linha {row_idx}: linha duplicada dentro do GRUPO '{group_key}'."
+                    )
+                    continue
+                duplicate_bucket.add(signature)
+
+                row_data = {
+                    "excel_row": row_idx,
+                    "group": group_key,
+                    "values": row_values,
+                }
+                data["sheets"][sheet]["rows"].append(row_data)
+                data["sheets"][sheet]["rows_by_group"].setdefault(group_key, []).append(row_data)
+
+                if group_key not in groups_seen:
+                    groups_seen.add(group_key)
+                    groups_order.append(group_key)
+
+        if errors:
+            return None, errors
+
+        if not groups_order:
+            return None, [
+                "Nenhuma linha válida encontrada para importar no SharePoint. As abas PESSOAS e EQUIPAMENTOS estão vazias."
+            ]
+
+        return data, []
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+
+def _create_group_workbook(source_data: dict, group_key: str) -> str:
+    """Cria um arquivo temporário .xlsx contendo apenas linhas do grupo informado."""
+    out_wb = openpyxl.Workbook()
+
+    # Remove aba padrão
+    default_sheet = out_wb.active
+    out_wb.remove(default_sheet)
+
+    for sheet_name in ["PESSOAS", "EQUIPAMENTOS"]:
+        ws = out_wb.create_sheet(title=sheet_name)
+        headers = source_data["sheets"][sheet_name]["headers"]
+        ws.append(headers)
+        group_rows = source_data["sheets"][sheet_name]["rows_by_group"].get(group_key, [])
+        for row in group_rows:
+            ws.append(row["values"])
+
+    os.makedirs(REPORTS_FOLDER, exist_ok=True)
+    temp_fd, temp_path = tempfile.mkstemp(prefix="mob_group_", suffix=".xlsx", dir=REPORTS_FOLDER)
+    os.close(temp_fd)
+    out_wb.save(temp_path)
+    out_wb.close()
+    return temp_path
+
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -377,7 +550,8 @@ def update_template():
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            universal_newlines=False
+            universal_newlines=False,
+            **_popen_hidden_kwargs()
         )
         raw_output = process.communicate()[0]
         process.wait()
@@ -409,17 +583,14 @@ def update_template():
 
 @app.route('/validate', methods=['POST'])
 def validate():
-    """Fase 1: Executa validação separada antes do upload"""
+    """Fase 1: valida estrutura e dados por GRUPO antes do upload."""
     start_job()
     try:
         file = request.files.get('file')
-        sheet_name = request.form.get('sheet', 'PESSOAS')
-        sheet_name = (sheet_name or 'PESSOAS').strip() or 'PESSOAS'
 
         if not file or not allowed_file(file.filename):
             return jsonify({'status': 'error', 'errors': ['Arquivo inválido ou não enviado.']}), 400
 
-        # Bloqueia template vazio para evitar validação/upload sem conteúdo.
         try:
             file.stream.seek(0, os.SEEK_END)
             uploaded_size = file.stream.tell()
@@ -442,57 +613,105 @@ def validate():
                 os.remove(file_path)
             return jsonify({'status': 'error', 'errors': ['O arquivo enviado está vazio.']}), 400
 
+        grouped_data, grouping_errors = _read_grouped_excel(file_path)
+        if grouping_errors:
+            return jsonify({
+                'status': 'failed',
+                'errors': grouping_errors,
+                'filename': filename,
+                'total_lines': 0
+            }), 200
+
         script_path = os.path.abspath("Validate-ExcelData.ps1")
-        cmd = build_powershell_command(script_path, file_path, sheet_name)
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=False
-        )
-        raw_output = process.communicate()[0]
-        process.wait()
-        full_output = decode_powershell_output(raw_output)
-
-        # Extrair JSON de validação da saída
-        start_marker = '---VALIDATION_JSON_START---'
-        end_marker = '---VALIDATION_JSON_END---'
-        
-        if start_marker in full_output and end_marker in full_output:
-            start_idx = full_output.index(start_marker) + len(start_marker)
-            end_idx = full_output.index(end_marker)
-            json_str = full_output[start_idx:end_idx].strip()
-            result = json.loads(json_str)
-
-            total_lines = result.get('total_lines', 0)
-            try:
-                total_lines = int(total_lines)
-            except (TypeError, ValueError):
-                total_lines = 0
-
-            if total_lines <= 0:
-                return jsonify({
-                    'status': 'error',
-                    'errors': ['Nenhuma linha válida encontrada para importar no SharePoint.'],
-                    'log': full_output,
-                    'filename': filename,
-                    'total_lines': total_lines
-                }), 200
-            
-            # Adicionar log da validação para debug
-            result['log'] = full_output
-            
-            # Incluir filename para a fase 2 reutilizar
-            result['filename'] = filename
-            return jsonify(result), 200
-        else:
+        if not os.path.exists(script_path):
             return jsonify({
                 'status': 'error',
-                'errors': ['Não foi possível obter resultado da validação.'],
-                'log': full_output,
+                'errors': ['Script de validação não encontrado.'],
                 'filename': filename
-            }), 200
+            }), 500
+
+        all_errors: list[str] = []
+        all_logs: list[str] = []
+        total_people = 0
+        total_equip = 0
+
+        group_summary = []
+        for group_key in grouped_data['group_order']:
+            people_count = len(grouped_data['sheets']['PESSOAS']['rows_by_group'].get(group_key, []))
+            equip_count = len(grouped_data['sheets']['EQUIPAMENTOS']['rows_by_group'].get(group_key, []))
+            total_people += people_count
+            total_equip += equip_count
+            group_summary.append({
+                'group': group_key,
+                'qtd_pessoas': people_count,
+                'qtd_equipamentos': equip_count
+            })
+
+            temp_group_path = _create_group_workbook(grouped_data, group_key)
+            try:
+                for sheet_name in ('PESSOAS', 'EQUIPAMENTOS'):
+                    row_count = len(grouped_data['sheets'][sheet_name]['rows_by_group'].get(group_key, []))
+                    if row_count == 0:
+                        continue
+
+                    cmd = build_powershell_command(script_path, temp_group_path, sheet_name)
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=False
+                    )
+                    raw_output = process.communicate()[0]
+                    process.wait()
+                    full_output = decode_powershell_output(raw_output)
+                    all_logs.append(f"\n[GRUPO {group_key} | {sheet_name}]\n{full_output}")
+
+                    start_marker = '---VALIDATION_JSON_START---'
+                    end_marker = '---VALIDATION_JSON_END---'
+                    if start_marker not in full_output or end_marker not in full_output:
+                        all_errors.append(
+                            f"[GRUPO {group_key} | {sheet_name}] Não foi possível obter resultado estruturado da validação."
+                        )
+                        continue
+
+                    start_idx = full_output.index(start_marker) + len(start_marker)
+                    end_idx = full_output.index(end_marker)
+                    json_str = full_output[start_idx:end_idx].strip()
+
+                    try:
+                        result = json.loads(json_str)
+                    except Exception as exc:
+                        all_errors.append(
+                            f"[GRUPO {group_key} | {sheet_name}] JSON inválido da validação: {exc}"
+                        )
+                        continue
+
+                    result_errors = result.get('errors') or []
+                    if result.get('status') != 'success' or result_errors:
+                        for err in result_errors:
+                            all_errors.append(f"[GRUPO {group_key} | {sheet_name}] {err}")
+            finally:
+                try:
+                    if os.path.exists(temp_group_path):
+                        os.remove(temp_group_path)
+                except Exception:
+                    pass
+
+        total_lines = total_people + total_equip
+        response_payload = {
+            'status': 'success' if not all_errors else 'failed',
+            'total_lines': total_lines,
+            'error_count': len(all_errors),
+            'errors': all_errors,
+            'filename': filename,
+            'group_summary': group_summary,
+            'sheet_counts': {
+                'PESSOAS': total_people,
+                'EQUIPAMENTOS': total_equip
+            },
+            'log': '\n'.join(all_logs)
+        }
+        return jsonify(response_payload), 200
 
     except Exception as e:
         return jsonify({
@@ -505,13 +724,12 @@ def validate():
 
 @app.route('/run-script', methods=['POST'])
 def run_script():
-    """Fase 2: Upload para SharePoint (usa o arquivo já salvo pela validação)"""
+    """Fase 2: Upload para SharePoint por GRUPO (processamento em blocos)."""
     data = request.get_json()
     if not data:
         return Response("Erro: Dados não enviados.", status=400)
 
     filename = data.get('filename', '')
-
     if not filename or not allowed_file(filename):
         return Response("Erro: Arquivo inválido.", status=400)
 
@@ -519,85 +737,147 @@ def run_script():
     if not os.path.exists(file_path):
         return Response("Erro: Arquivo não encontrado. Execute a validação primeiro.", status=400)
 
-    # Caminho absoluto para o script PowerShell
     script_path = os.path.abspath("Populate-SharePointList.ps1")
+    if not os.path.exists(script_path):
+        return Response("Erro: Script Populate-SharePointList.ps1 não encontrado.", status=500)
 
-    # Processamento unificado: PESSOAS + EQUIPAMENTOS (sem -SheetName)
-    cmd = build_powershell_populate_command(script_path, file_path)
+    grouped_data, grouping_errors = _read_grouped_excel(file_path)
+    if grouping_errors:
+        return Response("\n".join(grouping_errors), status=400, content_type='text/plain; charset=utf-8')
 
     def generate():
         start_job()
-        yield f"Arquivo recebido: {filename}\n"
-        yield f"Processando abas PESSOAS e EQUIPAMENTOS...\n"
-        yield f"Executando script PowerShell...\n{'-'*30}\n"
-
-        report_filename = None
+        consolidated_results: list[dict] = []
 
         try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                bufsize=1,
-                universal_newlines=False
-            )
+            groups = grouped_data['group_order']
+            yield f"Arquivo recebido: {filename}\n"
+            yield f"Processando {len(groups)} grupo(s) (PESSOAS + EQUIPAMENTOS)\n"
+            yield f"{'-'*30}\n"
 
-            detected_error_in_output = False
-            error_markers = [
-                "FALHA CRÍTICA",
-                "UPLOAD CANCELADO",
-                "--- RESULT: ERROR ---",
-                "Write-Error",
-                "Erro ao adicionar item",
-                "Não foi possível gerar um ID_Mobilizacao único",
-            ]
+            stop_processing = False
 
-            # Acumulador para extrair o bloco JSON do relatório
-            output_buffer: list[str] = []
-            in_report_json = False
-            report_json_lines: list[str] = []
-
-            REPORT_START = "---REPORT_JSON_START---"
-            REPORT_END   = "---REPORT_JSON_END---"
-
-            while True:
-                chunk = process.stdout.readline()
-                if not chunk:
+            for idx, group_key in enumerate(groups, start=1):
+                if stop_processing:
                     break
-                decoded = decode_powershell_output(chunk)
 
-                stripped = decoded.strip()
+                people_count = len(grouped_data['sheets']['PESSOAS']['rows_by_group'].get(group_key, []))
+                equip_count = len(grouped_data['sheets']['EQUIPAMENTOS']['rows_by_group'].get(group_key, []))
 
-                # Captura bloco JSON do relatório sem emitir para o stream
-                if stripped == REPORT_START:
-                    in_report_json = True
-                    continue
-                if stripped == REPORT_END:
-                    in_report_json = False
-                    continue
-                if in_report_json:
-                    report_json_lines.append(stripped)
-                    continue
+                yield f"\n---GROUP_PROGRESS:{idx}/{len(groups)}:{group_key}---\n"
+                yield f"[GRUPO {group_key}] Iniciando processamento ({people_count} PESSOAS, {equip_count} EQUIPAMENTOS).\n"
 
-                if any(marker in decoded for marker in error_markers):
-                    detected_error_in_output = True
-                yield decoded
+                temp_group_path = _create_group_workbook(grouped_data, group_key)
+                report_filename = None
+                group_id_mob = ""
+                group_ok = False
 
-            process.wait()
-
-            # ── Gerar Excel do relatório ──────────────────────────────────────
-            if report_json_lines:
                 try:
-                    report_data = json.loads("".join(report_json_lines))
-                    report_filename, _ = generate_report_excel(report_data)
-                    yield f"\n---REPORT_FILE:{report_filename}---\n"
-                except Exception as exc:
-                    yield f"\n[AVISO] Não foi possível gerar o relatório Excel: {exc}\n"
+                    cmd = build_powershell_populate_command(script_path, temp_group_path)
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        bufsize=1,
+                        universal_newlines=False
+                    )
 
-            if process.returncode == 0 and not detected_error_in_output:
-                yield f"\n{'-'*30}\n[SUCESSO] Processo finalizado com código 0.\n"
+                    detected_error_in_output = False
+                    error_markers = [
+                        "FALHA CRÍTICA",
+                        "UPLOAD CANCELADO",
+                        "--- RESULT: ERROR ---",
+                        "Write-Error",
+                        "Erro ao adicionar item",
+                        "Não foi possível gerar um ID_Mobilizacao único",
+                    ]
+
+                    in_report_json = False
+                    report_json_lines: list[str] = []
+                    report_data = None
+
+                    REPORT_START = "---REPORT_JSON_START---"
+                    REPORT_END = "---REPORT_JSON_END---"
+
+                    while True:
+                        chunk = process.stdout.readline()
+                        if not chunk:
+                            break
+                        decoded = decode_powershell_output(chunk)
+                        stripped = decoded.strip()
+
+                        if stripped == REPORT_START:
+                            in_report_json = True
+                            continue
+                        if stripped == REPORT_END:
+                            in_report_json = False
+                            continue
+                        if in_report_json:
+                            report_json_lines.append(stripped)
+                            continue
+
+                        if any(marker in decoded for marker in error_markers):
+                            detected_error_in_output = True
+
+                        yield decoded
+
+                    process.wait()
+
+                    if report_json_lines:
+                        try:
+                            report_data = json.loads("".join(report_json_lines))
+                            group_id_mob = str(report_data.get('id_mobilizacao', '') or '')
+                            report_filename, _ = generate_report_excel(report_data)
+                            yield f"---REPORT_FILE:{report_filename}---\n"
+                        except Exception as exc:
+                            yield f"[AVISO] Não foi possível gerar o relatório Excel do grupo {group_key}: {exc}\n"
+
+                    group_ok = process.returncode == 0 and not detected_error_in_output
+                    status_text = "success" if group_ok else "error"
+                    group_result = {
+                        'id_mobilizacao': group_id_mob,
+                        'status': status_text,
+                        'qtd_pessoas': people_count,
+                        'qtd_equipamentos': equip_count,
+                        'report_filename': report_filename
+                    }
+                    consolidated_results.append(group_result)
+                    yield f"---GROUP_RESULT:{json.dumps(group_result, ensure_ascii=False)}---\n"
+
+                    if group_ok:
+                        yield f"[GRUPO {group_key}] Concluído com sucesso.\n"
+                    else:
+                        yield f"[GRUPO {group_key}] Falhou. Encerrando processamento dos próximos grupos.\n"
+                        stop_processing = True
+
+                except Exception as exc:
+                    group_result = {
+                        'id_mobilizacao': group_id_mob,
+                        'status': 'error',
+                        'qtd_pessoas': people_count,
+                        'qtd_equipamentos': equip_count,
+                        'report_filename': report_filename
+                    }
+                    consolidated_results.append(group_result)
+                    yield f"---GROUP_RESULT:{json.dumps(group_result, ensure_ascii=False)}---\n"
+                    yield f"[ERRO DE EXECUÇÃO][GRUPO {group_key}]: {str(exc)}\n"
+                    stop_processing = True
+                finally:
+                    try:
+                        if os.path.exists(temp_group_path):
+                            os.remove(temp_group_path)
+                    except Exception:
+                        pass
+
+            yield "---GROUP_SUMMARY_JSON_START---\n"
+            yield json.dumps({'groups': consolidated_results}, ensure_ascii=False)
+            yield "\n---GROUP_SUMMARY_JSON_END---\n"
+
+            all_ok = consolidated_results and all(g.get('status') == 'success' for g in consolidated_results)
+            if all_ok:
+                yield f"\n{'-'*30}\n[SUCESSO] Todos os grupos foram processados com sucesso.\n"
             else:
-                yield f"\n{'-'*30}\n[ERRO] Processo finalizado com código {process.returncode}.\n"
+                yield f"\n{'-'*30}\n[ERRO] Processamento encerrado com falha em um grupo.\n"
 
         except Exception as e:
             yield f"\n[ERRO DE EXECUÇÃO]: {str(e)}\n"

@@ -138,6 +138,14 @@ try {
             continue
         }
 
+        $firstHeaderRaw = $wsHeader.Cells.Item(1, 1).Value2
+        $firstHeader = "$firstHeaderRaw".Trim()
+        if ($firstHeader -ne "GRUPO") {
+            $wsHeader.Columns.Item(1).Insert() | Out-Null
+            $wsHeader.Cells.Item(1, 1).Value2 = "GRUPO"
+            Write-Host "Aba '$sheetName': coluna GRUPO inserida na posição A." -ForegroundColor Green
+        }
+
         $usedRangeHeader = $wsHeader.UsedRange
         $lastHeaderColumnSheet = [Math]::Max($usedRangeHeader.Columns.Count, 1)
 
