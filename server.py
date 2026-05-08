@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from flask import Flask, render_template, request, Response, stream_with_context, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from datetime import datetime
@@ -933,6 +934,181 @@ def download_report(filename):
     if not os.path.exists(file_abs):
         return jsonify({'error': 'Relatório não encontrado.'}), 404
     return send_from_directory(reports_abs, safe_name, as_attachment=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Guided Correction helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _normalize_key(text: str) -> str:
+    """Normalize text: strip, lower, remove accents for comparison."""
+    if not text:
+        return ''
+    nfd = unicodedata.normalize('NFD', str(text).strip().lower())
+    return ''.join(c for c in nfd if unicodedata.category(c) != 'Mn')
+
+
+def _extract_lista_suspensa_columns(file_path: str) -> list:
+    """
+    Reads the hidden 'LISTA SUSPENSA' sheet from an Excel file.
+    Returns list of dicts: [{column_name, internal_name, options: [str]}]
+    """
+    result = []
+    try:
+        wb = openpyxl.load_workbook(file_path, data_only=True)
+        sheet_name = None
+        for name in wb.sheetnames:
+            if _normalize_key(name) in ('lista suspensa', 'lista_suspensa', 'listasuspensa', 'dropdown'):
+                sheet_name = name
+                break
+        if not sheet_name:
+            wb.close()
+            return result
+        ws = wb[sheet_name]
+        max_col = ws.max_column
+        if not max_col:
+            wb.close()
+            return result
+        for col in range(1, max_col + 1):
+            header_cell = ws.cell(row=1, column=col).value
+            if not header_cell:
+                continue
+            header = str(header_cell).strip()
+            m = re.match(r'^(?P<disp>.+?)\s*\[(?P<internal>[^\[\]]+)\]\s*$', header)
+            if m:
+                display_name = m.group('disp').strip()
+                internal_name = m.group('internal').strip()
+            else:
+                display_name = header
+                internal_name = header
+            options = []
+            for row in range(2, ws.max_row + 1):
+                val = ws.cell(row=row, column=col).value
+                if val is not None and str(val).strip():
+                    options.append(str(val).strip())
+            if options:
+                result.append({
+                    'column_name': display_name,
+                    'internal_name': internal_name,
+                    'options': options
+                })
+        wb.close()
+    except Exception:
+        pass
+    return result
+
+
+@app.route('/suggest-corrections', methods=['POST'])
+def suggest_corrections():
+    """Recebe erros de Choice e retorna sugestões da aba LISTA SUSPENSA."""
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data'}), 400
+    filename = data.get('filename', '')
+    error_entries = data.get('errors', [])
+    if not filename:
+        return jsonify({'error': 'No filename'}), 400
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(filename))
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
+    columns = _extract_lista_suspensa_columns(file_path)
+    suggestions = []
+    for entry in error_entries:
+        campo = entry.get('campo', '')
+        valor = entry.get('valor', '')
+        campo_norm = _normalize_key(campo)
+        matched_col = None
+        for col in columns:
+            if (_normalize_key(col['column_name']) == campo_norm or
+                    _normalize_key(col['internal_name']) == campo_norm):
+                matched_col = col
+                break
+        if not matched_col:
+            for col in columns:
+                if (campo_norm in _normalize_key(col['column_name']) or
+                        _normalize_key(col['column_name']) in campo_norm or
+                        campo_norm in _normalize_key(col['internal_name']) or
+                        _normalize_key(col['internal_name']) in campo_norm):
+                    matched_col = col
+                    break
+        if not matched_col:
+            suggestions.append({**entry, 'options': [], 'suggested': None, 'column_name': campo})
+            continue
+        options = matched_col['options']
+        valor_norm = _normalize_key(valor)
+        suggested = None
+        best_score = 999
+        for opt in options:
+            opt_norm = _normalize_key(opt)
+            if opt_norm == valor_norm:
+                suggested = opt
+                break
+            if valor_norm in opt_norm or opt_norm in valor_norm:
+                score = abs(len(opt_norm) - len(valor_norm))
+                if score < best_score:
+                    best_score = score
+                    suggested = opt
+        suggestions.append({
+            **entry,
+            'options': options,
+            'suggested': suggested,
+            'column_name': matched_col['column_name'],
+            'internal_name': matched_col['internal_name']
+        })
+    return jsonify({'suggestions': suggestions}), 200
+
+
+@app.route('/apply-corrections', methods=['POST'])
+def apply_corrections():
+    """Aplica correções selecionadas pelo usuário no arquivo Excel."""
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data'}), 400
+    filename = data.get('filename', '')
+    corrections = data.get('corrections', [])
+    if not filename:
+        return jsonify({'error': 'No filename'}), 400
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(filename))
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
+    try:
+        wb = openpyxl.load_workbook(file_path)
+        applied = 0
+        for corr in corrections:
+            sheet_name = corr.get('sheet', 'PESSOAS')
+            excel_row = corr.get('excel_row')
+            internal_name = corr.get('internal_name', '')
+            new_value = corr.get('new_value', '')
+            if not excel_row or not internal_name:
+                continue
+            if sheet_name not in wb.sheetnames:
+                continue
+            ws = wb[sheet_name]
+            target_col = None
+            for col in range(1, ws.max_column + 1):
+                header_val = ws.cell(row=1, column=col).value
+                if not header_val:
+                    continue
+                header = str(header_val).strip()
+                m = re.match(r'^(?P<disp>.+?)\s*\[(?P<internal>[^\[\]]+)\]\s*$', header)
+                if m:
+                    if (_normalize_key(m.group('internal')) == _normalize_key(internal_name) or
+                            _normalize_key(m.group('disp')) == _normalize_key(internal_name)):
+                        target_col = col
+                        break
+                else:
+                    if _normalize_key(header) == _normalize_key(internal_name):
+                        target_col = col
+                        break
+            if target_col is None:
+                continue
+            ws.cell(row=int(excel_row), column=target_col).value = new_value
+            applied += 1
+        wb.save(file_path)
+        wb.close()
+        return jsonify({'status': 'ok', 'applied': applied}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

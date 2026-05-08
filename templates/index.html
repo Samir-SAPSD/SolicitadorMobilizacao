@@ -498,6 +498,25 @@
     </div>
 </div>
 
+<!-- Modal de Correção Guiada -->
+<div class="modal fade" id="correctionModal" tabindex="-1" aria-labelledby="correctionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header" style="background-color: var(--vestas-earth-orange); color: #ffffff;">
+                <h5 class="modal-title" id="correctionModalLabel">🔧 Correção Guiada de Valores Inválidos</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body" id="correctionModalBody">
+                <p class="text-muted">Carregando sugestões...</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar sem corrigir</button>
+                <button type="button" class="btn btn-vestas-primary" id="btnApplyCorrections" disabled title="Aguardando sugestões...">✅ Aplicar trocas selecionadas</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Bootstrap JS Bundle -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
@@ -560,6 +579,17 @@
             progressBar.classList.add('progress-bar-animated');
             progressBar.style.backgroundColor = 'var(--vestas-blue-sky-01)';
             setProgress(0, 'Aguardando...', '');
+        };
+
+        const setErrorProgress = (stage, subtext = '') => {
+            _progressValue = 100;
+            progressBar.style.width = '100%';
+            progressBar.setAttribute('aria-valuenow', 100);
+            progressPct.textContent = '100%';
+            progressBar.classList.remove('progress-bar-animated');
+            progressBar.style.backgroundColor = 'var(--vestas-earth-red)';
+            progressStage.textContent = stage || 'Operação cancelada ✗';
+            progressSubtext.textContent = subtext;
         };
 
         const setSheetBar = (barEl, countEl, done, expected) => {
@@ -765,7 +795,13 @@
         };
 
         // ── Erros de validação ────────────────────────────────────────────
-        const showValidationErrors = (errorList) => {
+        let currentFilename = null; // rastreia o arquivo enviado para correções
+
+        const showValidationErrors = (errorList, title) => {
+            if (title) {
+                const labelEl = document.getElementById('validationErrorModalLabel');
+                if (labelEl) labelEl.textContent = title;
+            }
             const listEl = document.getElementById('validationErrorList');
             listEl.innerHTML = '';
             const ul = document.createElement('ul');
@@ -779,6 +815,137 @@
             listEl.appendChild(ul);
             new bootstrap.Modal(document.getElementById('validationErrorModal')).show();
         };
+
+        // ── Correção guiada de valores inválidos ──────────────────────────
+        const openCorrectionModal = async (errorEntries) => {
+            const bodyEl = document.getElementById('correctionModalBody');
+            bodyEl.innerHTML = '<p class="text-muted">Buscando sugestões da aba LISTA SUSPENSA...</p>';
+            const corrModal = new bootstrap.Modal(document.getElementById('correctionModal'));
+            corrModal.show();
+            try {
+                const resp = await fetch('/suggest-corrections', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: currentFilename, errors: errorEntries })
+                });
+                const data = await resp.json();
+                const suggestions = data.suggestions || [];
+                if (suggestions.length === 0) {
+                    bodyEl.innerHTML = '<p class="text-warning">Nenhuma sugestão disponível. Verifique a aba LISTA SUSPENSA no template.</p>';
+                    return;
+                }
+                bodyEl.innerHTML = '';
+                const table = document.createElement('table');
+                table.className = 'table table-bordered table-sm align-middle';
+                table.style.fontSize = '0.82rem';
+                table.innerHTML = `
+                    <thead style="background-color:var(--vestas-night-sky);color:#fff;position:sticky;top:0;">
+                        <tr>
+                            <th><input type="checkbox" id="selectAllCorrections" checked></th>
+                            <th>Grupo</th><th>Aba</th><th>Linha</th><th>Campo</th>
+                            <th>Valor Inválido</th><th>Sugestão Automática</th><th>Opção Desejada</th>
+                        </tr>
+                    </thead><tbody></tbody>`;
+                const tbody = table.querySelector('tbody');
+                const checkAllReady = () => {
+                    const allCbs = document.querySelectorAll('.correction-checkbox');
+                    const allChecked = Array.from(allCbs).every(cb => cb.checked);
+                    const btnApply = document.getElementById('btnApplyCorrections');
+                    if (btnApply) {
+                        btnApply.disabled = !allChecked;
+                        btnApply.title = allChecked ? '' : 'Confirme uma opção para cada campo antes de continuar.';
+                    }
+                };
+
+                suggestions.forEach((s, idx) => {
+                    const tr = document.createElement('tr');
+                    const hasSuggestion = !!s.suggested;
+                    const hasOptions = s.options && s.options.length > 0;
+                    // When there's no automatic suggestion, prepend a blank placeholder to force manual pick
+                    const blankOpt = !hasSuggestion && hasOptions
+                        ? `<option value="" disabled selected>— selecione uma opção —</option>`
+                        : '';
+                    const opts = (s.options || []).map(o =>
+                        `<option value="${o.replace(/"/g, '&quot;')}"${hasSuggestion && s.suggested === o ? ' selected' : ''}>${o}</option>`
+                    ).join('');
+                    const isChecked = hasSuggestion ? 'checked' : '';
+                    tr.setAttribute('style', hasSuggestion ? '' : 'background-color:#fff3cd;');
+                    tr.innerHTML = `
+                        <td><input type="checkbox" class="correction-checkbox" data-idx="${idx}" ${isChecked}></td>
+                        <td>${s.group || '-'}</td>
+                        <td>${s.sheet || '-'}</td>
+                        <td>${s.line || '-'}</td>
+                        <td>${s.campo || '-'}</td>
+                        <td><span class="badge bg-danger" style="word-break:break-word;white-space:normal;">${s.valor || '-'}</span></td>
+                        <td><span class="badge ${hasSuggestion ? 'bg-warning text-dark' : 'bg-secondary'}" style="word-break:break-word;white-space:normal;">${s.suggested || '⚠ sem sugestão — selecione manualmente'}</span></td>
+                        <td>
+                            ${(blankOpt || opts) ? `<select class="form-select form-select-sm correction-select" data-idx="${idx}">${blankOpt}${opts}</select>` : '<span class="text-danger small">Sem opções disponíveis na LISTA SUSPENSA</span>'}
+                        </td>`;
+                    tbody.appendChild(tr);
+                });
+                bodyEl.appendChild(table);
+
+                // Wire up checkbox change → re-validate + update select state
+                tbody.querySelectorAll('.correction-checkbox').forEach((cb, idx) => {
+                    cb.addEventListener('change', () => {
+                        checkAllReady();
+                    });
+                    // When user picks a real value from select, auto-check the row; blank placeholder unchecks
+                    const sel = tbody.querySelectorAll('.correction-select')[idx];
+                    if (sel) sel.addEventListener('change', () => { cb.checked = !!sel.value; checkAllReady(); });
+                });
+
+                document.getElementById('selectAllCorrections')?.addEventListener('change', (e) => {
+                    document.querySelectorAll('.correction-checkbox').forEach(cb => cb.checked = e.target.checked);
+                    checkAllReady();
+                });
+                document.getElementById('correctionModal').dataset.suggestions = JSON.stringify(suggestions);
+                checkAllReady(); // set initial button state
+            } catch (err) {
+                bodyEl.innerHTML = `<p class="text-danger">Erro ao buscar sugestões: ${err.message}</p>`;
+            }
+        };
+
+        document.getElementById('btnApplyCorrections')?.addEventListener('click', async () => {
+            const modal = document.getElementById('correctionModal');
+            const suggestions = JSON.parse(modal.dataset.suggestions || '[]');
+            const checkboxes = document.querySelectorAll('.correction-checkbox');
+            const selects = document.querySelectorAll('.correction-select');
+            const corrections = [];
+            checkboxes.forEach((cb, i) => {
+                if (!cb.checked) return;
+                const s = suggestions[i];
+                const newValue = selects[i]?.value || s.suggested;
+                if (!newValue) return;
+                corrections.push({
+                    sheet: s.sheet,
+                    excel_row: s.line,
+                    internal_name: s.internal_name || s.campo,
+                    new_value: newValue
+                });
+            });
+            if (corrections.length === 0) { alert('Nenhuma correção selecionada.'); return; }
+            const btnApply = document.getElementById('btnApplyCorrections');
+            btnApply.disabled = true;
+            try {
+                const resp = await fetch('/apply-corrections', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: currentFilename, corrections })
+                });
+                const result = await resp.json();
+                if (result.status === 'ok') {
+                    bootstrap.Modal.getInstance(modal)?.hide();
+                    alert(`${result.applied} correção(ões) aplicada(s). Clique em "Iniciar Importação" para reenviar.`);
+                } else {
+                    alert('Erro ao aplicar correções: ' + (result.error || 'desconhecido'));
+                }
+            } catch (err) {
+                alert('Erro de comunicação: ' + err.message);
+            } finally {
+                btnApply.disabled = false;
+            }
+        });
 
         // ── Submit principal ──────────────────────────────────────────────
         const handleSubmit = async (event) => {
@@ -843,17 +1010,19 @@
                 }
 
                 if (!validationResult) {
-                    setProgress(0, 'Erro na validação', 'Não foi possível obter resultado.');
+                    setErrorProgress('Erro na validação ✗', 'Não foi possível obter resultado.');
                     appendLog('\n[ERRO] Não foi possível obter o resultado da validação.\n');
+                    showValidationErrors(['Não foi possível obter o resultado da validação. Tente novamente.'], '⛔ Erro na Validação');
                     btnSubmit.disabled = false; spinner.style.display = 'none';
                     btnText.textContent = 'Iniciar Importação';
                     enableLogDownload(); return;
                 }
 
                 if (validationResult.status !== 'success') {
-                    setProgress(0, 'Validação reprovada', `${(validationResult.errors || []).length} erro(s) encontrado(s).`);
+                    const errCount = (validationResult.errors || []).length;
+                    setErrorProgress('Validação reprovada ✗', `${errCount} erro(s) encontrado(s).`);
                     appendLog('\n❌ VALIDAÇÃO FALHOU — Upload BLOQUEADO.\n');
-                    showValidationErrors(validationResult.errors || ['Erro desconhecido na validação.']);
+                    showValidationErrors(validationResult.errors || ['Erro desconhecido na validação.'], `⛔ Validação Reprovada — ${errCount} Erro(s)`);
                     btnSubmit.disabled = false; spinner.style.display = 'none';
                     btnText.textContent = 'Iniciar Importação';
                     enableLogDownload(); return;
@@ -861,8 +1030,8 @@
 
                 const totalLines = Number(validationResult.total_lines || 0);
                 if (totalLines <= 0) {
-                    setProgress(0, 'Validação reprovada', 'Nenhuma linha válida encontrada.');
-                    showValidationErrors(['Nenhuma linha válida encontrada para importar no SharePoint.']);
+                    setErrorProgress('Validação reprovada ✗', 'Nenhuma linha válida encontrada.');
+                    showValidationErrors(['Nenhuma linha válida encontrada para importar no SharePoint.'], '⛔ Arquivo sem dados');
                     btnSubmit.disabled = false; spinner.style.display = 'none';
                     btnText.textContent = 'Iniciar Importação';
                     enableLogDownload(); return;
@@ -873,12 +1042,14 @@
                 sheetProgressSection.style.display = 'block';
                 refreshSheetProgressUI();
 
+                if (validationResult.filename) currentFilename = validationResult.filename;
                 setProgress(30, 'Fase 1 concluída ✓', `${totalLines} linha(s) validada(s).`);
                 appendLog(`\n✅ Validação concluída. ${totalLines} linha(s) válida(s).\n`);
 
             } catch (error) {
-                setProgress(0, 'Erro crítico na validação', error.message);
+                setErrorProgress('Erro crítico na validação ✗', error.message);
                 appendLog(`\n[ERRO CRÍTICO NA VALIDAÇÃO]: ${error.message}\n`);
+                showValidationErrors([`Erro crítico na validação: ${error.message}`], '⛔ Erro Crítico');
                 btnSubmit.disabled = false; spinner.style.display = 'none';
                 btnText.textContent = 'Iniciar Importação';
                 enableLogDownload(); return;
@@ -918,9 +1089,52 @@
                 const decoder = new TextDecoder();
                 let streamBuffer = '';
 
+                // ── Estado do bloco UPLOAD CANCELADO ─────────────────────
+                let inUploadCancelado = false;
+                let uploadCanceladoErrors = [];
+                let currentStreamSheet = 'PESSOAS';
+
                 const processStreamLine = (lineRaw) => {
                     const line = lineRaw.replace(/\r$/, '');
                     const trimmed = line.trim();
+
+                    // Detect sheet context for error attribution
+                    if (/processando aba PESSOAS/i.test(trimmed)) currentStreamSheet = 'PESSOAS';
+                    if (/processando aba EQUIPAMENTOS/i.test(trimmed)) currentStreamSheet = 'EQUIPAMENTOS';
+
+                    // ── UPLOAD CANCELADO block detection ─────────────────
+                    if (trimmed.startsWith('UPLOAD CANCELADO:')) {
+                        inUploadCancelado = true;
+                        uploadCanceladoErrors = [];
+                        setErrorProgress('Operação cancelada ✗', trimmed.replace('UPLOAD CANCELADO:', '').trim());
+                        appendLog(line + '\n');
+                        return;
+                    }
+                    if (inUploadCancelado) {
+                        if (trimmed === '' || trimmed.startsWith('---')) {
+                            // End of block
+                            inUploadCancelado = false;
+                            if (uploadCanceladoErrors.length > 0) {
+                                showValidationErrors(
+                                    uploadCanceladoErrors.map(e => e.rawText),
+                                    `⛔ Upload Cancelado — ${uploadCanceladoErrors.length} Erro(s)`
+                                );
+                                openCorrectionModal(uploadCanceladoErrors);
+                            }
+                        } else {
+                            const lineMatch = trimmed.match(/Linha\s+(\d+).*?Campo\s+'([^']+)'.*?valor\s+'([^']+)'/i);
+                            uploadCanceladoErrors.push({
+                                rawText: trimmed.replace(/^-\s+/, ''),
+                                line: lineMatch ? lineMatch[1] : '?',
+                                campo: lineMatch ? lineMatch[2] : '?',
+                                valor: lineMatch ? lineMatch[3] : '?',
+                                sheet: currentStreamSheet,
+                                group: sheetProgress.currentGroup || '-'
+                            });
+                        }
+                        appendLog(line + '\n');
+                        return;
+                    }
 
                     const groupProgressMatch = trimmed.match(/^---GROUP_PROGRESS:(\d+)\/(\d+):(.*)---$/);
                     if (groupProgressMatch) {
@@ -1047,6 +1261,16 @@
                     processStreamLine(streamBuffer);
                 }
 
+                // Flush UPLOAD CANCELADO block if stream ended while inside it
+                if (inUploadCancelado && uploadCanceladoErrors.length > 0) {
+                    showValidationErrors(
+                        uploadCanceladoErrors.map(e => e.rawText),
+                        `⛔ Upload Cancelado — ${uploadCanceladoErrors.length} Erro(s)`
+                    );
+                    openCorrectionModal(uploadCanceladoErrors);
+                    inUploadCancelado = false;
+                }
+
                 // Se não chegou a 100 via marcador, finaliza
                 if (_progressValue < 100) {
                     if (errors === 0) {
@@ -1065,8 +1289,9 @@
                 renderReportLinks();
 
             } catch (error) {
-                setProgress(0, 'Erro crítico no upload', error.message);
+                setErrorProgress('Erro crítico no upload ✗', error.message);
                 appendLog(`\n[ERRO CRÍTICO NO UPLOAD]: ${error.message}`);
+                showValidationErrors([`Erro crítico no upload: ${error.message}`], '⛔ Erro Crítico no Upload');
             } finally {
                 btnSubmit.disabled = false;
                 spinner.style.display = 'none';
